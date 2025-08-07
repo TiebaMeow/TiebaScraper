@@ -1,0 +1,15 @@
+{
+    "ruff.nativeServer": "on",
+    "ruff.configuration": "${workspaceFolder}/ruff.toml",
+    "ruff.importStrategy": "fromEnvironment",
+    "ruff.format.preview": true,
+    "[python]": {
+        "editor.codeActionsOnSave": {
+            "source.fixAll.ruff": "explicit",
+            "source.organizeImports.ruff": "explicit"
+        },
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.formatOnType": true,
+        "editor.formatOnSave": true,
+    }
+}
