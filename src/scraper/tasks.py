@@ -41,7 +41,7 @@ class Task:
         | FullScanCommentsTask
         | IncrementalScanCommentsTask
         | DeepScanTask
-    )
+    ) = dataclasses.field(compare=False)
 
 
 @dataclasses.dataclass

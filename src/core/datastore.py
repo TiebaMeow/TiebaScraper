@@ -173,7 +173,7 @@ class DataStore:
 
         log.debug(f"Marked {len(new_ids)} new {item_type} IDs as processed")
 
-    async def save_items(self, items: list[ModelType]):
+    async def save_items(self, items: list[ModelType], upsert: bool = False):
         """将SQLAlchemy对象批量保存到数据库。
 
         使用PostgreSQL的 "INSERT ... ON CONFLICT DO NOTHING"
@@ -192,7 +192,7 @@ class DataStore:
                 model_class = type(items[0])
 
                 statement = insert(model_class).values(items_as_dicts)
-                statement = statement.on_conflict_do_nothing()
+                statement = statement.on_conflict_do_update() if upsert else statement.on_conflict_do_nothing()
 
                 await session.execute(statement)
                 await session.commit()

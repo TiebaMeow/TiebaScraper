@@ -74,7 +74,7 @@ class PydanticConfig(BaseModel):
     def database_url(self) -> PostgresDsn:
         """生成PostgreSQL数据库连接URL"""
         return PostgresDsn(
-            f"postgresql://{quote_plus(self.database.username)}:{quote_plus(self.database.password)}"
+            f"postgresql+asyncpg://{quote_plus(self.database.username)}:{quote_plus(self.database.password)}"
             f"@{self.database.host}:{self.database.port}/{self.database.db_name}"
         )
 

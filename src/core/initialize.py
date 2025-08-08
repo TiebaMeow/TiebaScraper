@@ -11,7 +11,7 @@ from typing import Literal
 from sqlalchemy import select
 
 from ..config import Config
-from ..models import Forum
+from ..models import Base, Forum
 from .container import Container
 
 log = logging.getLogger(__name__)
@@ -39,12 +39,38 @@ async def initialize_application(mode: Literal["periodic", "backfill"]) -> tuple
     container = Container(config=app_config)
     await container.setup()
 
+    await create_tables(container)
+
     await initialize_forums(container)
 
     task_queue = asyncio.PriorityQueue()
 
     log.info("Application initialized successfully.")
     return container, task_queue
+
+
+async def create_tables(container: Container) -> None:
+    """创建数据库表。
+
+    使用SQLAlchemy的Base.metadata.create_all方法在数据库中创建所有定义的模型表。
+
+    Args:
+        container: 依赖注入容器实例，提供数据库会话工厂。
+    """
+    log.info("Initializing database tables...")
+
+    if not container.tb_client or not container.async_sessionmaker:
+        raise RuntimeError("Container is not set up properly.")
+
+    try:
+        async with container.db_engine.begin() as conn:  # type: ignore
+            await conn.run_sync(Base.metadata.create_all)
+
+    except Exception as e:
+        log.error(f"Failed to create database tables: {e}")
+        raise
+
+    log.info("Database tables created successfully.")
 
 
 async def initialize_forums(container: Container) -> None:

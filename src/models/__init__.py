@@ -6,6 +6,7 @@
 """
 
 from .models import (
+    Base,
     Comment,
     Forum,
     Post,

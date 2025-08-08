@@ -60,7 +60,9 @@ class PeriodicSchedulingStrategy(SchedulingStrategy):
             return
 
         while True:
-            self.log.info(f"Scheduler tick: Generating homepage scan tasks for forums: {forums}")
+            self.log.info(
+                f"Scheduler tick: Generating homepage scan tasks for forums: {[forum.fname for forum in forums]}"
+            )
             await self._schedule_homepage_scans(forums)
 
             self.log.info(f"All homepage tasks scheduled. Sleeping for {interval} seconds.")

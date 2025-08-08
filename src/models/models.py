@@ -8,16 +8,15 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 import pytz
-from pydantic import BaseModel
-from sqlalchemy import BIGINT, DateTime, ForeignKey, Index, Integer, String, Text
+from pydantic import BaseModel, field_validator
+from sqlalchemy import BIGINT, DateTime, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, foreign, mapped_column, relationship
 
 if TYPE_CHECKING:
     import aiotieba.api.get_posts._classdef as aiotieba_posts
@@ -130,6 +129,11 @@ class FragLinkModel(BaseModel):
     title: str = ""
     raw_url: str = ""
 
+    @field_validator("raw_url", mode="before")
+    @classmethod
+    def _coerce_raw_url(cls, v):
+        return "" if v is None else str(v)
+
 
 class FragTextModel(BaseModel):
     """纯文本碎片模型。
@@ -155,6 +159,11 @@ class FragTiebaPlusModel(BaseModel):
     type: Literal["tieba_plus"] = "tieba_plus"
     text: str = ""
     url: str = ""
+
+    @field_validator("url", mode="before")
+    @classmethod
+    def _coerce_url(cls, v):
+        return "" if v is None else str(v)
 
 
 class FragVideoModel(BaseModel):
@@ -219,16 +228,23 @@ class MixinBase(Base):
         Returns:
             dict: 包含模型列名和对应值的字典。
         """
-        return {c.name: getattr(self, c.name) for c in self.__table__.columns}
+        result = {}
+        for c in self.__table__.columns:
+            value = getattr(self, c.name)
+            if c.name == "contents" and value is not None:
+                result[c.name] = [frag.dict() for frag in value]
+            else:
+                result[c.name] = value
+        return result
+        # return {c.name: getattr(self, c.name) for c in self.__table__.columns}
 
 
-class AiotiebaConvertible(ABC):
+class AiotiebaConvertible:
     """
     为可以从aiotieba对象转换的模型定义一个通用接口的抽象基类。
     """
 
     @classmethod
-    @abstractmethod
     def from_aiotieba(cls: type[T_AiotiebaConvertible], obj: T_Aiotieba) -> T_AiotiebaConvertible:
         """
         从aiotieba库返回的对象创建模型实例的抽象方法。
@@ -302,7 +318,11 @@ class Forum(MixinBase):
     fid: Mapped[int] = mapped_column(BIGINT, primary_key=True)
     fname: Mapped[str] = mapped_column(String(255), index=True)
 
-    threads: Mapped[list[Thread]] = relationship("Thread", back_populates="forum")
+    threads: Mapped[list[Thread]] = relationship(
+        "Thread",
+        back_populates="forum",
+        primaryjoin=lambda: Forum.fid == foreign(Thread.fid),
+    )
 
 
 class User(MixinBase):
@@ -325,9 +345,21 @@ class User(MixinBase):
     user_name: Mapped[str] = mapped_column(String(255), nullable=True, index=True)
     nick_name: Mapped[str] = mapped_column(String(255), nullable=True, index=True)
 
-    threads: Mapped[list[Thread]] = relationship("Thread", back_populates="author")
-    posts: Mapped[list[Post]] = relationship("Post", back_populates="author")
-    comments: Mapped[list[Comment]] = relationship("Comment", back_populates="author")
+    threads: Mapped[list[Thread]] = relationship(
+        "Thread",
+        back_populates="author",
+        primaryjoin=lambda: User.user_id == foreign(Thread.author_id),
+    )
+    posts: Mapped[list[Post]] = relationship(
+        "Post",
+        back_populates="author",
+        primaryjoin=lambda: User.user_id == foreign(Post.author_id),
+    )
+    comments: Mapped[list[Comment]] = relationship(
+        "Comment",
+        back_populates="author",
+        primaryjoin=lambda: User.user_id == foreign(Comment.author_id),
+    )
 
     @classmethod
     def from_aiotieba(cls, user: aiotieba.UserInfo) -> User:
@@ -386,12 +418,24 @@ class Thread(MixinBase, AiotiebaConvertible):
     author_level: Mapped[int] = mapped_column(Integer)
     scrape_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_with_tz)
 
-    fid: Mapped[int] = mapped_column(ForeignKey("forum.fid"), index=True)
-    author_id: Mapped[int] = mapped_column(ForeignKey("user.user_id"), index=True)
+    fid: Mapped[int] = mapped_column(BIGINT, index=True)
+    author_id: Mapped[int] = mapped_column(BIGINT, index=True)
 
-    forum: Mapped[Forum] = relationship("Forum", back_populates="threads")
-    author: Mapped[User] = relationship("User", back_populates="threads")
-    posts: Mapped[list[Post]] = relationship("Post", back_populates="thread")
+    forum: Mapped[Forum] = relationship(
+        "Forum",
+        back_populates="threads",
+        primaryjoin=lambda: foreign(Thread.fid) == Forum.fid,
+    )
+    author: Mapped[User] = relationship(
+        "User",
+        back_populates="threads",
+        primaryjoin=lambda: foreign(Thread.author_id) == User.user_id,
+    )
+    posts: Mapped[list[Post]] = relationship(
+        "Post",
+        back_populates="thread",
+        primaryjoin=lambda: Thread.tid == foreign(Post.tid),
+    )
 
     @classmethod
     def from_aiotieba(cls, thread: aiotieba.Thread) -> Thread:
@@ -412,6 +456,7 @@ class Thread(MixinBase, AiotiebaConvertible):
             last_time=thread.last_time,
             reply_num=thread.reply_num,
             author_level=thread.user.level,
+            scrape_time=now_with_tz(),
             fid=thread.fid,
             author_id=thread.user.user_id,
         )
@@ -452,12 +497,24 @@ class Post(MixinBase, AiotiebaConvertible):
     author_level: Mapped[int] = mapped_column(Integer)
     scrape_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_with_tz)
 
-    tid: Mapped[int] = mapped_column(ForeignKey("thread.tid"), index=True)
-    author_id: Mapped[int] = mapped_column(ForeignKey("user.user_id"), index=True)
+    tid: Mapped[int] = mapped_column(BIGINT, index=True)
+    author_id: Mapped[int] = mapped_column(BIGINT, index=True)
 
-    thread: Mapped[Thread] = relationship("Thread", back_populates="posts")
-    author: Mapped[User] = relationship("User", back_populates="posts")
-    comments: Mapped[list[Comment]] = relationship("Comment", back_populates="post")
+    thread: Mapped[Thread] = relationship(
+        "Thread",
+        back_populates="posts",
+        primaryjoin=lambda: foreign(Post.tid) == Thread.tid,
+    )
+    author: Mapped[User] = relationship(
+        "User",
+        back_populates="posts",
+        primaryjoin=lambda: foreign(Post.author_id) == User.user_id,
+    )
+    comments: Mapped[list[Comment]] = relationship(
+        "Comment",
+        back_populates="post",
+        primaryjoin=lambda: Post.pid == foreign(Comment.pid),
+    )
 
     @classmethod
     def from_aiotieba(cls, post: aiotieba.Post) -> Post:
@@ -477,6 +534,7 @@ class Post(MixinBase, AiotiebaConvertible):
             floor=post.floor,
             reply_num=post.reply_num,
             author_level=post.user.level,
+            scrape_time=now_with_tz(),
             tid=post.tid,
             author_id=post.user.user_id,
         )
@@ -491,10 +549,10 @@ class Comment(MixinBase, AiotiebaConvertible):
         text: 楼中楼的纯文本内容。
         contents: 楼中楼的正文内容碎片列表，以JSONB格式存储。
         author_level: 作者在主题贴所在吧的等级。
+        reply_to_id: 被回复者的user_id，可为空。
         scrape_time: 数据抓取时间。
         pid: 所属回复ID，外键关联到Post表。
         author_id: 作者user_id，外键关联到User表。
-        reply_to_id: 被回复者的user_id，可为空。
         post: 所属回复对象，与Post模型的关系。
         author: 作者用户对象，与User模型的关系。
     """
@@ -511,14 +569,22 @@ class Comment(MixinBase, AiotiebaConvertible):
     text: Mapped[str] = mapped_column(Text)
     contents: Mapped[list[Fragment] | None] = mapped_column(JSONB, nullable=True)
     author_level: Mapped[int] = mapped_column(Integer)
+    reply_to_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     scrape_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_with_tz)
 
-    pid: Mapped[int] = mapped_column(ForeignKey("post.pid"), index=True)
-    author_id: Mapped[int] = mapped_column(ForeignKey("user.user_id"), index=True)
-    reply_to_id: Mapped[int | None] = mapped_column(ForeignKey("user.user_id"), index=True, nullable=True)
+    pid: Mapped[int] = mapped_column(BIGINT, index=True)
+    author_id: Mapped[int] = mapped_column(BIGINT, index=True)
 
-    post: Mapped[Post] = relationship("Post", back_populates="comments")
-    author: Mapped[User] = relationship("User", back_populates="comments")
+    post: Mapped[Post] = relationship(
+        "Post",
+        back_populates="comments",
+        primaryjoin=lambda: foreign(Comment.pid) == Post.pid,
+    )
+    author: Mapped[User] = relationship(
+        "User",
+        back_populates="comments",
+        primaryjoin=lambda: foreign(Comment.author_id) == User.user_id,
+    )
 
     @classmethod
     def from_aiotieba(cls, comment: aiotieba.Comment | aiotieba_posts.Comment_p) -> Comment:
@@ -536,7 +602,8 @@ class Comment(MixinBase, AiotiebaConvertible):
             text=comment.text,
             contents=cls.convert_content_list(comment.contents.objs),
             author_level=comment.user.level,
+            reply_to_id=comment.reply_to_id or None,
+            scrape_time=now_with_tz(),
             pid=comment.ppid,
             author_id=comment.user.user_id,
-            reply_to_id=comment.reply_to_id,
         )
