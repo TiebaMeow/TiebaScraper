@@ -15,8 +15,7 @@ from zoneinfo import ZoneInfo
 from pydantic import BaseModel, field_validator
 from sqlalchemy import BIGINT, DateTime, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import Mapped, foreign, mapped_column, relationship
+from sqlalchemy.orm import DeclarativeBase, Mapped, foreign, mapped_column, relationship
 
 if TYPE_CHECKING:
     import aiotieba.api.get_posts._classdef as aiotieba_posts
@@ -27,7 +26,12 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 T_AiotiebaConvertible = TypeVar("T_AiotiebaConvertible", bound="AiotiebaConvertible")
-Base = declarative_base()
+
+
+class Base(DeclarativeBase):
+    pass
+
+
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 
 
