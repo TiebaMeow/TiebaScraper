@@ -131,31 +131,36 @@ async def initialize_forums(container: Container) -> None:
     if not container.tb_client or not container.async_sessionmaker:
         raise RuntimeError("Container is not set up properly.")
 
+    forum_list: list[Forum] = []
     try:
         async with container.async_sessionmaker() as session:
-            existing_forums = await session.execute(select(Forum))
-            existing_forums = existing_forums.scalars().all()
+            try:
+                existing_forums = await session.execute(select(Forum))
+                existing_forums = existing_forums.scalars().all()
 
-            forum_list: list[Forum] = []
-            for forum_name in container.config.forums:
-                if forum := next((f for f in existing_forums if f.fname == forum_name), None):
-                    forum_list.append(forum)
-                    continue
+                for forum_name in container.config.forums:
+                    if forum := next((f for f in existing_forums if f.fname == forum_name), None):
+                        forum_list.append(forum)
+                        continue
 
-                fid = await container.tb_client.get_fid(forum_name)
-                if not fid:
-                    log.warning(f"Forum [{forum_name}吧] not found, skipping.")
-                    continue
-                new_forum = Forum(fid=fid, fname=forum_name)
-                session.add(new_forum)
-                forum_list.append(new_forum)
-                log.info(f"Added new forum: {forum_name} (fid={fid})")
+                    fid = await container.tb_client.get_fid(forum_name)
+                    if not fid:
+                        log.warning(f"Forum [{forum_name}吧] not found, skipping.")
+                        continue
+                    new_forum = Forum(fid=fid, fname=forum_name)
+                    session.add(new_forum)
+                    forum_list.append(new_forum)
+                    log.info(f"Added new forum: {forum_name} (fid={fid})")
 
-            await session.commit()
+                await session.commit()
+
+            except Exception:
+                await session.rollback()
+                raise
 
     except Exception as e:
         log.error(f"Failed to initialize forums: {e}")
-        await session.rollback()
         raise
+
     container.forums = forum_list
     log.info(f"Forums initialized: {[f.fname for f in forum_list]}")
