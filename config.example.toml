@@ -13,6 +13,10 @@ port = 5432
 username = "admin"
 password = "123456"
 db_name = "tieba_data"
+# 分区间隔
+p_interval = "1 month"
+# 分区预创建数量
+p_premake = 4
 
 [redis]
 host = "localhost"

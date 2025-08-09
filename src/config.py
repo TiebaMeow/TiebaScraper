@@ -28,6 +28,8 @@ class DatabaseConfig(BaseModel):
     username: str = "admin"
     password: str = "123456"
     db_name: str = "tieba_data"
+    p_interval: str = "1 month"
+    p_premake: int = 4
 
 
 class RedisConfig(BaseModel):
@@ -45,7 +47,7 @@ class TiebaConfig(BaseModel):
 
     BDUSS: str = Field(...)
     forums: list[str] = Field(..., min_length=1)
-    max_backfill_pages: int = Field(500, gt=0)
+    max_backfill_pages: int = Field(100, gt=0)
 
 
 class RateLimitConfig(BaseModel):
@@ -153,6 +155,14 @@ class Config:
         return str(self.pydantic_config.database_url)
 
     @property
+    def p_interval(self) -> str:
+        return self.pydantic_config.database.p_interval
+
+    @property
+    def p_premake(self) -> int:
+        return self.pydantic_config.database.p_premake
+
+    @property
     def redis_url(self) -> str:
         return str(self.pydantic_config.redis_url)
 
@@ -187,9 +197,10 @@ class Config:
             str: 包含主要配置项的字符串表示。
         """
         return (
-            f"Config(database_url={self.database_url}, redis_url={self.redis_url}, "
-            f"BDUSS={self.BDUSS}, forums={self.forums}, rps_limit={self.rps_limit}, "
-            f"concurrency_limit={self.concurrency_limit}, "
+            f"Config(database_url={self.database_url}, p_interval={self.p_interval}, p_premake={self.p_premake}, "
+            f"redis_url={self.redis_url}, "
+            f"BDUSS={self.BDUSS}, forums={self.forums}, "
+            f"rps_limit={self.rps_limit}, concurrency_limit={self.concurrency_limit}, "
             f"scheduler_interval_seconds={self.scheduler_interval_seconds}, "
             f"mode={self.mode})"
         )

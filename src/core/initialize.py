@@ -8,7 +8,8 @@ import asyncio
 import logging
 from typing import Literal
 
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncConnection
 
 from ..config import Config
 from ..models import Base, Forum
@@ -23,8 +24,9 @@ async def initialize_application(mode: Literal["periodic", "backfill"]) -> tuple
     该函数封装了应用启动所需的所有核心初始化步骤：
     1. 根据运行模式加载配置。
     2. 创建并设置依赖注入容器。
-    3. 初始化数据库中的贴吧列表。
-    4. 创建主任务队列。
+    3. 创建数据库表并注册分区。
+    4. 初始化数据库中的贴吧列表。
+    5. 创建主任务队列。
 
     Args:
         mode: 应用程序的运行模式 ("periodic" 或 "backfill")。
@@ -49,6 +51,40 @@ async def initialize_application(mode: Literal["periodic", "backfill"]) -> tuple
     return container, task_queue
 
 
+async def _partman_create_parent(
+    conn: AsyncConnection, parent_table: str, interval: str = "1 month", premake: int = 4
+) -> None:
+    res = await conn.execute(
+        text("SELECT 1 FROM partman.part_config WHERE parent_table = :pt LIMIT 1"),
+        {"pt": parent_table},
+    )
+    already_managed = res.first() is not None
+    if already_managed:
+        return
+    try:
+        result = await conn.execute(
+            text(
+                """
+                SELECT partman.create_parent(
+                    p_parent_table := :p_parent_table,
+                    p_control      := 'create_time',
+                    p_interval     := :p_interval,
+                    p_premake      := :p_premake
+                );
+                """
+            ),
+            {"p_parent_table": parent_table, "p_interval": interval, "p_premake": premake},
+        )
+        if result.rowcount == 0:
+            raise RuntimeError(f"Failed to register {parent_table} to pg_partman.")
+
+    except Exception as e:
+        log.error(f"Error creating partition for {parent_table}: {e}")
+        raise RuntimeError(f"Failed to register {parent_table} to pg_partman.") from e
+
+    log.info(f"Registered {parent_table} to pg_partman (interval={interval}, premake={premake}).")
+
+
 async def create_tables(container: Container) -> None:
     """创建数据库表。
 
@@ -65,6 +101,15 @@ async def create_tables(container: Container) -> None:
     try:
         async with container.db_engine.begin() as conn:  # type: ignore
             await conn.run_sync(Base.metadata.create_all)
+            await conn.execute(text("CREATE SCHEMA IF NOT EXISTS partman;"))
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_partman WITH SCHEMA partman;"))
+            for table in ("thread", "post", "comment"):
+                await _partman_create_parent(
+                    conn,
+                    f"public.{table}",
+                    interval=container.config.p_interval,
+                    premake=container.config.p_premake,
+                )
 
     except Exception as e:
         log.error(f"Failed to create database tables: {e}")
