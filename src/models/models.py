@@ -10,8 +10,8 @@ import dataclasses
 import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
+from zoneinfo import ZoneInfo
 
-import pytz
 from pydantic import BaseModel, field_validator
 from sqlalchemy import BIGINT, DateTime, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
@@ -28,7 +28,7 @@ log = logging.getLogger(__name__)
 
 T_AiotiebaConvertible = TypeVar("T_AiotiebaConvertible", bound="AiotiebaConvertible")
 Base = declarative_base()
-SHANGHAI_TZ = pytz.timezone("Asia/Shanghai")
+SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 
 
 __all__ = [
@@ -448,7 +448,7 @@ class Thread(MixinBase, AiotiebaConvertible):
         """
         return cls(
             tid=thread.tid,
-            create_time=datetime.fromtimestamp(thread.create_time, tz=pytz.timezone("Asia/Shanghai")),
+            create_time=datetime.fromtimestamp(thread.create_time, tz=SHANGHAI_TZ),
             title=thread.title,
             text=thread.text,
             contents=cls.convert_content_list(thread.contents.objs),
@@ -527,7 +527,7 @@ class Post(MixinBase, AiotiebaConvertible):
         """
         return cls(
             pid=post.pid,
-            create_time=datetime.fromtimestamp(post.create_time, tz=pytz.timezone("Asia/Shanghai")),
+            create_time=datetime.fromtimestamp(post.create_time, tz=SHANGHAI_TZ),
             text=post.text,
             contents=cls.convert_content_list(post.contents.objs),
             floor=post.floor,
@@ -597,7 +597,7 @@ class Comment(MixinBase, AiotiebaConvertible):
         """
         return cls(
             cid=comment.pid,
-            create_time=datetime.fromtimestamp(comment.create_time, tz=pytz.timezone("Asia/Shanghai")),
+            create_time=datetime.fromtimestamp(comment.create_time, tz=SHANGHAI_TZ),
             text=comment.text,
             contents=cls.convert_content_list(comment.contents.objs),
             author_level=comment.user.level,
