@@ -7,6 +7,8 @@ from typing import Any
 
 import aiotieba as tb
 from aiolimiter import AsyncLimiter
+from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt
+from tenacity.wait import wait_exponential_jitter
 
 
 class Client(tb.Client):
@@ -83,7 +85,18 @@ class Client(tb.Client):
             @wraps(attr)
             async def rate_limited_wrapper(*args, **kwargs) -> Any:
                 async with self.rate_limiter():
-                    return await attr(*args, **kwargs)
+                    async for attempt in AsyncRetrying(
+                        stop=stop_after_attempt(3),
+                        wait=wait_exponential_jitter(initial=0.2, max=2.0),
+                        retry=retry_if_exception_type((asyncio.TimeoutError, ConnectionError, OSError)),
+                        reraise=True,
+                    ):
+                        with attempt:
+                            ret = await attr(*args, **kwargs)
+                            err = getattr(ret, "err", None)
+                            if err:
+                                raise err
+                            return ret
 
             return rate_limited_wrapper
 
