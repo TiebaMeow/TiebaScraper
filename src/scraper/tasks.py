@@ -24,7 +24,7 @@ class Priority(IntEnum):
     LOW = 3  # FullScanComments, IncrementalScanComments, DeepScan
 
 
-@dataclasses.dataclass(order=True)
+@dataclasses.dataclass(order=True, slots=True, frozen=True)
 class Task:
     """放入优先级队列的任务对象。
 
@@ -44,7 +44,7 @@ class Task:
     ) = dataclasses.field(compare=False)
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True, frozen=True)
 class ScanThreadsTask:
     """扫描指定贴吧的任务。
 
@@ -63,7 +63,7 @@ class ScanThreadsTask:
     is_good: bool = False
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True, frozen=True)
 class FullScanPostsTask:
     """全量扫描指定主题贴的所有回复和楼中楼。
 
@@ -76,7 +76,7 @@ class FullScanPostsTask:
     rn: int = 30
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True, frozen=True)
 class IncrementalScanPostsTask:
     """增量扫描指定主题贴的回复和楼中楼。
 
@@ -93,7 +93,7 @@ class IncrementalScanPostsTask:
     rn: int = 30
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True, frozen=True)
 class FullScanCommentsTask:
     """扫描单个回复下所有楼中楼的任务。
 
@@ -106,7 +106,7 @@ class FullScanCommentsTask:
     pid: int
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True, frozen=True)
 class IncrementalScanCommentsTask:
     """增量扫描单个回复下的楼中楼。
 
@@ -121,7 +121,7 @@ class IncrementalScanCommentsTask:
     pid: int
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True, frozen=True)
 class DeepScanTask:
     """深度扫描单个贴子下的楼中楼。
 
