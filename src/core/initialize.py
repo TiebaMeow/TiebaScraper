@@ -45,7 +45,7 @@ async def initialize_application(mode: Literal["periodic", "backfill"]) -> tuple
 
     await initialize_forums(container)
 
-    task_queue = asyncio.PriorityQueue()
+    task_queue = asyncio.PriorityQueue(maxsize=10000)
 
     log.info("Application initialized successfully.")
     return container, task_queue
