@@ -224,7 +224,12 @@ class FullScanPostsTaskHandler(TaskHandler):
         try:
             while True:
                 page = await self.container.tb_client.get_posts(  # type: ignore
-                    tid, pn, rn=rn, with_comments=True, comment_rn=10
+                    tid,
+                    pn,
+                    rn=rn,
+                    with_comments=True,
+                    comment_sort_by_agree=False,
+                    comment_rn=10,
                 )
 
                 if not page or not page.objs:
@@ -308,6 +313,7 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
                 rn=rn,
                 sort=PostSortType.DESC,
                 with_comments=True,
+                comment_sort_by_agree=False,
                 comment_rn=10,
             )
 
@@ -348,7 +354,14 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
             if pn == start_pn and initial_page_data:
                 posts_page = initial_page_data
             else:
-                posts_page = await self.container.tb_client.get_posts(tid, pn, rn=rn)  # type: ignore
+                posts_page = await self.container.tb_client.get_posts(  # type: ignore
+                    tid,
+                    pn,
+                    rn=rn,
+                    with_comments=True,
+                    comment_sort_by_agree=False,
+                    comment_rn=10,
+                )
 
             if not posts_page or not posts_page.objs:
                 self.log.warning(f"No posts found on tid={tid}, pn={pn}. Skipping page.")
@@ -360,7 +373,15 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
                 self.log.info(f"No new posts found on tid={tid}, pn={pn}. Stopping scan.")
                 break
 
-        hot_page = await self.container.tb_client.get_posts(tid, pn=1, rn=rn, sort=PostSortType.HOT)  # type: ignore
+        hot_page = await self.container.tb_client.get_posts(  # type: ignore
+            tid,
+            pn=1,
+            rn=rn,
+            sort=PostSortType.HOT,
+            with_comments=True,
+            comment_sort_by_agree=False,
+            comment_rn=10,
+        )
 
         if hot_page and hot_page.objs:
             self.log.info(f"Hot posts for tid={tid} found on page 1. Processing hot posts.")

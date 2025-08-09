@@ -43,7 +43,7 @@ class RedisConfig(BaseModel):
 class TiebaConfig(BaseModel):
     """贴吧相关配置模型"""
 
-    BDUSS: str = Field(..., min_length=1)
+    BDUSS: str = Field(...)
     forums: list[str] = Field(..., min_length=1)
     max_backfill_pages: int = Field(500, gt=0)
 
@@ -52,7 +52,7 @@ class RateLimitConfig(BaseModel):
     """请求频率限制配置模型"""
 
     rps: int = Field(10, gt=0)
-    concurrency: int = Field(4, gt=0)
+    concurrency: int = Field(8, gt=0)
 
 
 class SchedulerConfig(BaseModel):
@@ -67,7 +67,7 @@ class PydanticConfig(BaseModel):
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     redis: RedisConfig = Field(default_factory=RedisConfig)
     tieba: TiebaConfig
-    rate_limit: RateLimitConfig = Field(default_factory=lambda: RateLimitConfig(rps=10, concurrency=4))
+    rate_limit: RateLimitConfig = Field(default_factory=lambda: RateLimitConfig(rps=10, concurrency=8))
     scheduler: SchedulerConfig = Field(default_factory=lambda: SchedulerConfig(interval_seconds=60))
 
     @computed_field

@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "aiolimiter>=1.2.1,<2",
-    "aiotieba>=4.5.3,<5",
+    "aiotieba>=4.6.0,<5",
     "asyncpg>=0.30.0,<1",
     "cashews[redis]>=7.4.1,<8",
     "pydantic>=2.11.7,<3",
