@@ -106,8 +106,7 @@ class ThreadsTaskHandler(TaskHandler):
         is_good = task_content.is_good
 
         try:
-            async with self.container.limiter:  # type: ignore
-                threads_data = await self.container.tb_client.get_threads(fname, pn=pn, rn=rn, is_good=is_good)  # type: ignore
+            threads_data = await self.container.tb_client.get_threads(fname, pn=pn, rn=rn, is_good=is_good)  # type: ignore
 
             if not threads_data.objs:
                 self.log.info(f"No threads found for {fname}吧, pn={pn}. Task finished.")
@@ -223,8 +222,9 @@ class FullScanPostsTaskHandler(TaskHandler):
 
         try:
             while True:
-                async with self.container.limiter:  # type: ignore
-                    page = await self.container.tb_client.get_posts(tid, pn, rn=rn, with_comments=True, comment_rn=10)  # type: ignore
+                page = await self.container.tb_client.get_posts(  # type: ignore
+                    tid, pn, rn=rn, with_comments=True, comment_rn=10
+                )
 
                 if not page or not page.objs:
                     self.log.info(f"No posts found for tid={tid}, pn={pn}. Task finished.")
@@ -301,15 +301,14 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
         rn = task_content.rn
 
         try:
-            async with self.container.limiter:  # type: ignore
-                latest_page = await self.container.tb_client.get_posts(  # type: ignore
-                    tid,
-                    pn=0xFFFF,
-                    rn=rn,
-                    sort=PostSortType.DESC,
-                    with_comments=True,
-                    comment_rn=10,
-                )
+            latest_page = await self.container.tb_client.get_posts(  # type: ignore
+                tid,
+                pn=0xFFFF,
+                rn=rn,
+                sort=PostSortType.DESC,
+                with_comments=True,
+                comment_rn=10,
+            )
 
             if not latest_page or not latest_page.objs:
                 self.log.info(f"No posts found for tid={tid}. Task finished.")
@@ -348,8 +347,7 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
             if pn == start_pn and initial_page_data:
                 posts_page = initial_page_data
             else:
-                async with self.container.limiter:  # type: ignore
-                    posts_page = await self.container.tb_client.get_posts(tid, pn, rn=rn)  # type: ignore
+                posts_page = await self.container.tb_client.get_posts(tid, pn, rn=rn)  # type: ignore
 
             if not posts_page or not posts_page.objs:
                 self.log.warning(f"No posts found on tid={tid}, pn={pn}. Skipping page.")
@@ -361,8 +359,7 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
                 self.log.info(f"No new posts found on tid={tid}, pn={pn}. Stopping scan.")
                 break
 
-        async with self.container.limiter:  # type: ignore
-            hot_page = await self.container.tb_client.get_posts(tid, pn=1, rn=rn, sort=PostSortType.HOT)  # type: ignore
+        hot_page = await self.container.tb_client.get_posts(tid, pn=1, rn=rn, sort=PostSortType.HOT)  # type: ignore
 
         if hot_page and hot_page.objs:
             self.log.info(f"Hot posts for tid={tid} found on page 1. Processing hot posts.")
@@ -523,8 +520,7 @@ class FullScanCommentsTaskHandler(TaskHandler):
         pid = task_content.pid
 
         try:
-            async with self.container.limiter:  # type: ignore
-                initial_page_data = await self.container.tb_client.get_comments(tid, pid, pn=1)  # type: ignore
+            initial_page_data = await self.container.tb_client.get_comments(tid, pid, pn=1)  # type: ignore
 
             if not initial_page_data or not initial_page_data.objs:
                 self.log.info(f"Post pid={pid} in tid={tid} has no comments or has been deleted. Task finished.")
@@ -562,8 +558,7 @@ class FullScanCommentsTaskHandler(TaskHandler):
             if pn == 1:
                 comments_page = initial_page_data
             else:
-                async with self.container.limiter:  # type: ignore
-                    comments_page = await self.container.tb_client.get_comments(tid, pid, pn)  # type: ignore
+                comments_page = await self.container.tb_client.get_comments(tid, pid, pn)  # type: ignore
 
             if not comments_page or not comments_page.objs:
                 self.log.warning(f"No comments found on pid={pid}, pn={pn}. Stopping scan.")
@@ -631,8 +626,7 @@ class IncrementalScanCommentsTaskHandler(TaskHandler):
         pid = task_content.pid
 
         try:
-            async with self.container.limiter:  # type: ignore
-                comments_page = await self.container.tb_client.get_comments(tid, pid)  # type: ignore
+            comments_page = await self.container.tb_client.get_comments(tid, pid)  # type: ignore
 
             if not comments_page or not comments_page.objs:
                 self.log.info(f"No comments found for pid={pid} in tid={tid}. Task finished.")
@@ -662,8 +656,7 @@ class IncrementalScanCommentsTaskHandler(TaskHandler):
             if pn == 1:
                 comments_page = initial_page_data
             else:
-                async with self.container.limiter:  # type: ignore
-                    comments_page = await self.container.tb_client.get_comments(tid, pid, pn)  # type: ignore
+                comments_page = await self.container.tb_client.get_comments(tid, pid, pn)  # type: ignore
 
             if not comments_page or not comments_page.objs:
                 self.log.warning(f"No comments found on pid={pid}, pn={pn}. Stopping scan.")

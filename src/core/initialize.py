@@ -97,8 +97,7 @@ async def initialize_forums(container: Container) -> None:
                     forum_list.append(forum)
                     continue
 
-                async with container.limiter:  # type: ignore
-                    fid = await container.tb_client.get_fid(forum_name)
+                fid = await container.tb_client.get_fid(forum_name)
                 if not fid:
                     log.warning(f"Forum [{forum_name}吧] not found, skipping.")
                     continue

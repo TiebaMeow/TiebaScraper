@@ -52,6 +52,7 @@ class RateLimitConfig(BaseModel):
     """请求频率限制配置模型"""
 
     rps: int = Field(10, gt=0)
+    concurrency: int = Field(4, gt=0)
 
 
 class SchedulerConfig(BaseModel):
@@ -66,7 +67,7 @@ class PydanticConfig(BaseModel):
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     redis: RedisConfig = Field(default_factory=RedisConfig)
     tieba: TiebaConfig
-    rate_limit: RateLimitConfig = Field(default_factory=lambda: RateLimitConfig(rps=10))
+    rate_limit: RateLimitConfig = Field(default_factory=lambda: RateLimitConfig(rps=10, concurrency=4))
     scheduler: SchedulerConfig = Field(default_factory=lambda: SchedulerConfig(interval_seconds=60))
 
     @computed_field
@@ -172,6 +173,10 @@ class Config:
         return self.pydantic_config.rate_limit.rps
 
     @property
+    def concurrency_limit(self) -> int:
+        return self.pydantic_config.rate_limit.concurrency
+
+    @property
     def scheduler_interval_seconds(self) -> int:
         return self.pydantic_config.scheduler.interval_seconds
 
@@ -184,5 +189,7 @@ class Config:
         return (
             f"Config(database_url={self.database_url}, redis_url={self.redis_url}, "
             f"BDUSS={self.BDUSS}, forums={self.forums}, rps_limit={self.rps_limit}, "
-            f"scheduler_interval_seconds={self.scheduler_interval_seconds}, mode={self.mode})"
+            f"concurrency_limit={self.concurrency_limit}, "
+            f"scheduler_interval_seconds={self.scheduler_interval_seconds}, "
+            f"mode={self.mode})"
         )

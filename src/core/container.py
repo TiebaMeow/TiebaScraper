@@ -4,18 +4,22 @@
 各种外部资源和服务，包括数据库连接、Redis客户端、aiotieba客户端等。
 """
 
+from __future__ import annotations
+
 import logging
+from asyncio import Semaphore
 from typing import TYPE_CHECKING
 
-import aiotieba
 import redis.asyncio as redis
 from aiolimiter import AsyncLimiter
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
-from ..config import Config
+from .client import Client
 
 if TYPE_CHECKING:
+    from ..config import Config
     from ..models import Forum
+
 
 log = logging.getLogger(__name__)
 
@@ -45,9 +49,10 @@ class Container:
         self.config = config
 
         self.limiter: AsyncLimiter | None = None
+        self.semaphore: Semaphore | None = None
         self.db_engine: AsyncEngine | None = None
         self.redis_client: redis.Redis | None = None
-        self.tb_client: aiotieba.Client | None = None
+        self.tb_client: Client | None = None
         self.forums: list[Forum] | None = None
 
     async def setup(self):
@@ -55,9 +60,10 @@ class Container:
 
         依次初始化以下资源：
         1. AsyncLimiter - 用于aiotieba请求限流
-        2. PostgreSQL异步数据库引擎和会话工厂
-        3. Redis异步客户端连接
-        4. aiotieba客户端
+        2. Semaphore - 用于控制并发请求数
+        3. Client - 带速率与并发限制的异步贴吧客户端
+        4. PostgreSQL异步数据库引擎和会话工厂
+        5. Redis异步客户端连接
 
         如果任何步骤失败，会自动调用teardown()清理已初始化的资源。
 
@@ -66,8 +72,14 @@ class Container:
         """
         log.info("Initializing container resources...")
         try:
-            self.limiter = AsyncLimiter(self.config.rps_limit, 1.0)
+            self.limiter = AsyncLimiter(self.config.rps_limit, time_period=1.0)
+            self.semaphore = Semaphore(self.config.concurrency_limit)
             log.info(f"AioLimiter initialized with a rate of {self.config.rps_limit} RPS.")
+
+            self.tb_client = await Client(
+                self.config.BDUSS, limiter=self.limiter, semaphore=self.semaphore
+            ).__aenter__()
+            log.info("Tieba Client started.")
 
             self.db_engine = create_async_engine(self.config.database_url, echo=False)
             self.async_sessionmaker = async_sessionmaker(
@@ -78,9 +90,6 @@ class Container:
             self.redis_client = await redis.from_url(self.config.redis_url, decode_responses=True)
             await self.redis_client.ping()
             log.info("Redis client connected successfully.")
-
-            self.tb_client = await aiotieba.Client(self.config.BDUSS).__aenter__()
-            log.info("aiotieba.Client started.")
 
             log.info("Container resources initialized successfully.")
 
@@ -93,17 +102,13 @@ class Container:
         """异步关闭并清理所有资源。
 
         按相反顺序安全关闭所有已初始化的资源：
-        1. aiotieba客户端
-        2. Redis客户端连接
-        3. PostgreSQL数据库引擎
+        1. Redis客户端连接
+        2. PostgreSQL数据库引擎
+        3. aiotieba客户端
 
         该方法是幂等的，可以安全地多次调用。
         """
         log.info("Tearing down container resources...")
-
-        if self.tb_client:
-            await self.tb_client.__aexit__()
-            log.info("aiotieba.Client closed.")
 
         if self.redis_client:
             await self.redis_client.close()
@@ -112,5 +117,9 @@ class Container:
         if self.db_engine:
             await self.db_engine.dispose()
             log.info("PostgreSQL AsyncEngine disposed.")
+
+        if self.tb_client:
+            await self.tb_client.__aexit__()
+            log.info("Tieba Client closed.")
 
         log.info("Container resources torn down successfully.")
