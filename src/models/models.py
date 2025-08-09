@@ -412,7 +412,7 @@ class Thread(MixinBase, AiotiebaConvertible):
     title: Mapped[str] = mapped_column(String(255))
     text: Mapped[str] = mapped_column(Text)
     contents: Mapped[list[Fragment] | None] = mapped_column(JSONB, nullable=True)
-    last_time: Mapped[int] = mapped_column(Integer)
+    last_time: Mapped[int] = mapped_column(BIGINT)
     reply_num: Mapped[int] = mapped_column(Integer)
     author_level: Mapped[int] = mapped_column(Integer)
     scrape_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_with_tz)
@@ -568,7 +568,7 @@ class Comment(MixinBase, AiotiebaConvertible):
     text: Mapped[str] = mapped_column(Text)
     contents: Mapped[list[Fragment] | None] = mapped_column(JSONB, nullable=True)
     author_level: Mapped[int] = mapped_column(Integer)
-    reply_to_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reply_to_id: Mapped[int | None] = mapped_column(BIGINT, nullable=True)
     scrape_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_with_tz)
 
     pid: Mapped[int] = mapped_column(BIGINT, index=True)
