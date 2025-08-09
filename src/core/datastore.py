@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from typing import Literal, TypeVar
 
 from cashews import Cache, add_prefix
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 
@@ -22,6 +22,13 @@ ItemType = Literal["thread", "post", "comment"]
 log = logging.getLogger(__name__)
 
 CONSUMER_QUEUE_KEY = "consumer:queue"
+PRIMARY_KEY_MAP = {
+    Thread: {"tid", "create_time"},
+    Post: {"pid", "create_time"},
+    Comment: {"cid", "create_time"},
+    Forum: {"fid"},
+    User: {"user_id"},
+}
 
 
 class DataStore:
@@ -177,11 +184,14 @@ class DataStore:
         """将SQLAlchemy对象批量保存到数据库。
 
         使用PostgreSQL的 "INSERT ... ON CONFLICT DO NOTHING"
-        防止极端情况下的主键冲突。
+        防止极端情况下的主键冲突，
+        或使用 "INSERT ... ON CONFLICT DO UPDATE" 实现UPSERT功能。
 
         Args:
             items: 需要保存的SQLAlchemy模型实例列表。支持Comment、Forum、
-                  Post、Thread、User等类型。
+                   Post、Thread、User等类型。
+            upsert: 是否启用UPSERT功能。如果为True，则在主键冲突时更新现有记录。
+                    默认为False，表示仅插入新记录，冲突时忽略。
         """
         if not items:
             return
@@ -192,7 +202,17 @@ class DataStore:
                 model_class = type(items[0])
 
                 statement = insert(model_class).values(items_as_dicts)
-                statement = statement.on_conflict_do_update() if upsert else statement.on_conflict_do_nothing()
+
+                if upsert:
+                    primary_key = PRIMARY_KEY_MAP.get(model_class)
+                    update_dict = {
+                        col.name: statement.excluded[col.name]
+                        for col in model_class.__table__.columns
+                        if col.name not in primary_key
+                    }
+                    statement = statement.on_conflict_do_update(index_elements=list(primary_key), set_=update_dict)  # type: ignore
+                else:
+                    statement = statement.on_conflict_do_nothing()
 
                 await session.execute(statement)
                 await session.commit()
@@ -232,34 +252,6 @@ class DataStore:
             statement = select(Post).where(Post.pid.in_(pids))
             result = await session.execute(statement)
             return list(result.scalars().all())
-
-    async def update_threads_reply_nums(self, updates: list[tuple[int, int]]):
-        """更新指定帖子的回复数。
-
-        Args:
-            updates: 包含 (tid, reply_num) 的元组列表
-        """
-        async with self.get_session() as session:
-            for tid, reply_num in updates:
-                statement = update(Thread).where(Thread.tid == tid).values(reply_num=reply_num)
-                await session.execute(statement)
-            await session.commit()
-
-            log.info(f"Updated reply_num for {len(updates)} threads.")
-
-    async def update_posts_reply_nums(self, updates: list[tuple[int, int]]):
-        """更新指定回复的回复数。
-
-        Args:
-            updates: 包含 (pid, reply_num) 的元组列表
-        """
-        async with self.get_session() as session:
-            for pid, reply_num in updates:
-                statement = update(Post).where(Post.pid == pid).values(reply_num=reply_num)
-                await session.execute(statement)
-            await session.commit()
-
-            log.info(f"Updated reply_num for {len(updates)} posts.")
 
     async def push_to_consumer_queue(self, item_type: ItemType, item_id: int):
         """将新处理的数据信息推送到Consumer队列。

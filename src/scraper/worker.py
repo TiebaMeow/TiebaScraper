@@ -178,7 +178,7 @@ class ThreadsTaskHandler(TaskHandler):
         stored_threads = await self.datastore.get_threads_by_tids(old_tids)
         stored_threads_map = {t.tid: t for t in stored_threads}
 
-        reply_num_updates = []
+        thread_to_update = []
 
         for thread_data in old_threads:
             stored_thread = stored_threads_map.get(thread_data.tid)
@@ -187,7 +187,7 @@ class ThreadsTaskHandler(TaskHandler):
                     f"Thread tid={thread_data.tid} has updates. "
                     f"Reply count: {stored_thread.reply_num} -> {thread_data.reply_num}"
                 )
-                reply_num_updates.append((thread_data.tid, thread_data.reply_num))
+                thread_to_update.append(thread_data)
 
                 update_task_content = IncrementalScanPostsTask(
                     tid=thread_data.tid, last_time=thread_data.last_time, last_floor=stored_thread.reply_num
@@ -195,8 +195,9 @@ class ThreadsTaskHandler(TaskHandler):
                 await self.queue.put(Task(priority=Priority.MEDIUM, content=update_task_content))
                 self.log.debug(f"Scheduled IncrementalScanPostsTask for updated tid={thread_data.tid}")
 
-        if reply_num_updates:
-            await self.datastore.update_threads_reply_nums(reply_num_updates)
+        if thread_to_update:
+            thread_models = [ThreadModel.from_aiotieba(t) for t in thread_to_update]
+            await self.datastore.save_items(thread_models, upsert=True)
 
 
 class FullScanPostsTaskHandler(TaskHandler):
@@ -458,7 +459,7 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
         stored_posts = await self.datastore.get_posts_by_pids(old_pids)
         stored_posts_map = {p.pid: p for p in stored_posts}
 
-        reply_num_updates = []
+        posts_to_update = []
 
         for post_data in old_posts:
             stored_post = stored_posts_map.get(post_data.pid)
@@ -467,14 +468,15 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
                     f"Post pid={post_data.pid} has updates. "
                     f"Reply count: {stored_post.reply_num} -> {post_data.reply_num}"
                 )
-                reply_num_updates.append((post_data.pid, post_data.reply_num))
+                posts_to_update.append(post_data)
 
                 update_task_content = IncrementalScanCommentsTask(tid=post_data.tid, pid=post_data.pid)
                 await self.queue.put(Task(priority=Priority.LOW, content=update_task_content))
                 self.log.debug(f"Scheduled IncrementalScanCommentsTask for updated pid={post_data.pid}")
 
-        if reply_num_updates:
-            await self.datastore.update_posts_reply_nums(reply_num_updates)
+        if posts_to_update:
+            post_models = [PostModel.from_aiotieba(p) for p in posts_to_update]
+            await self.datastore.save_items(post_models, upsert=True)
 
     async def _process_attached_comments(self, posts: Posts):
         """处理回复附带的楼中楼。

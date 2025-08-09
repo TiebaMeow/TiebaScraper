@@ -236,7 +236,6 @@ class MixinBase(Base):
             else:
                 result[c.name] = value
         return result
-        # return {c.name: getattr(self, c.name) for c in self.__table__.columns}
 
 
 class AiotiebaConvertible:

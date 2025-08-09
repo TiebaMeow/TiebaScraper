@@ -76,7 +76,9 @@ class Client(tb.Client):
         """
         attr = super().__getattribute__(name)
 
-        if name in self.RATE_LIMITED_METHODS and awaitable(attr):
+        rate_limited_methods = object.__getattribute__(self, "RATE_LIMITED_METHODS")
+
+        if name in rate_limited_methods and awaitable(attr):
 
             @wraps(attr)
             async def rate_limited_wrapper(*args, **kwargs) -> Any:
