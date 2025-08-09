@@ -34,21 +34,32 @@ async def main_periodic():
     """
     container, task_queue = await initialize_application(mode="periodic")
 
+    tasks: list[asyncio.Task] = []
     try:
         log.info("Starting application in periodic mode.")
 
         scheduler_instance = Scheduler(queue=task_queue, container=container)
         worker_instances = [Worker(i, task_queue, container) for i in range(3)]
 
-        scheduler_task = asyncio.create_task(scheduler_instance.run(mode="periodic"))
+        tasks.append(asyncio.create_task(scheduler_instance.run(mode="periodic"), name="scheduler"))
+        tasks.extend(asyncio.create_task(w.run(), name=f"worker-{i}") for i, w in enumerate(worker_instances))
 
-        worker_tasks = [asyncio.create_task(worker.run()) for worker in worker_instances]
+        await asyncio.gather(*tasks)
 
-        await asyncio.gather(scheduler_task, *worker_tasks)
+    except asyncio.CancelledError:
+        log.info("Received cancellation in periodic mode.")
+        raise
 
     except Exception as e:
         log.exception(f"Application failed to start or run: {e}")
+
     finally:
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
         log.info("Shutting down application...")
         await container.teardown()
 
@@ -71,28 +82,38 @@ async def main_backfill():
     """
     container, task_queue = await initialize_application(mode="backfill")
 
+    tasks: list[asyncio.Task] = []
     try:
         log.info("Starting application with OOP interface in backfill mode.")
 
         scheduler_instance = Scheduler(queue=task_queue, container=container)
         worker_instances = [Worker(i, task_queue, container) for i in range(5)]
 
-        scheduler_task = asyncio.create_task(scheduler_instance.run(mode="backfill"))
+        scheduler_task = asyncio.create_task(scheduler_instance.run(mode="backfill"), name="scheduler")
+        worker_tasks = [
+            asyncio.create_task(worker.run(), name=f"worker-{i}") for i, worker in enumerate(worker_instances)
+        ]
 
-        worker_tasks = [asyncio.create_task(worker.run()) for worker in worker_instances]
+        tasks.append(scheduler_task)
+        tasks.extend(worker_tasks)
 
         await scheduler_task
-
         await task_queue.join()
 
-        for task in worker_tasks:
-            task.cancel()
-
-        await asyncio.gather(*worker_tasks, return_exceptions=True)
+    except asyncio.CancelledError:
+        log.info("Received cancellation in backfill mode.")
+        raise
 
     except Exception as e:
         log.exception(f"Application failed to start or run: {e}")
+
     finally:
+        for t in tasks:
+            if t.get_name().startswith("worker-") and not t.done():
+                t.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
         log.info("Shutting down application...")
         await container.teardown()
 

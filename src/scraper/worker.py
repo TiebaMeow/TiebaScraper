@@ -796,7 +796,7 @@ class Worker:
                 self.log.exception(f"An unexpected error occurred in worker loop: {e}")
                 await asyncio.sleep(1)
             finally:
-                if "task" in locals() and not self.queue.empty():
+                if "task" in locals():
                     self.queue.task_done()
 
     async def _process_task(self, task: Task):
