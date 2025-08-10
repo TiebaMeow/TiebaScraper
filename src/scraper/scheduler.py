@@ -16,7 +16,7 @@ from ..core import Container
 from ..models import Forum
 from .tasks import PartmanMaintenanceTask, Priority, ScanThreadsTask, Task
 
-log = logging.getLogger(__name__)
+log = logging.getLogger("scheduler")
 
 
 class Scheduler:
@@ -34,7 +34,7 @@ class Scheduler:
     def __init__(self, queue: PriorityQueue, container: Container):
         self.queue = queue
         self.container = container
-        self.log = logging.getLogger(self.__class__.__name__)
+        self.log = logging.getLogger("scheduler")
 
     async def run(self, mode: Literal["periodic", "backfill"] = "periodic"):
         """根据不同模式生成任务并放入队列。
@@ -64,7 +64,7 @@ class Scheduler:
 
         tick = 0
         while True:
-            self.log.info(
+            self.log.debug(
                 f"Scheduler tick #{tick}: Generating homepage scan tasks for forums: "
                 f"{[forum.fname for forum in forums]}"
             )
@@ -76,10 +76,10 @@ class Scheduler:
 
             # 每 N 个周期扫描一次精华贴首页
             if tick % good_every == 0:
-                self.log.info("Extra GOOD-section homepage scheduling this tick.")
+                self.log.debug("Extra GOOD-section homepage scheduling this tick.")
                 await self._schedule_homepage_scans(forums, is_good=True)
 
-            self.log.info(f"All homepage tasks scheduled. Sleeping for {interval} seconds.")
+            self.log.debug(f"All homepage tasks scheduled. Sleeping for {interval} seconds.")
             await asyncio.sleep(interval)
             tick += 1
 
@@ -103,7 +103,7 @@ class Scheduler:
         """调度一次 pg_partman 分区维护任务。"""
         task = Task(priority=Priority.LOW, content=PartmanMaintenanceTask())
         await self.queue.put(task)
-        self.log.info("Scheduled PartmanMaintenanceTask with priority=LOW")
+        self.log.debug("Scheduled PartmanMaintenanceTask with priority=LOW")
 
     async def _schedule_homepage_scans(self, forums: list[Forum], *, is_good: bool = False):
         """调度首页扫描任务（周期模式）。
@@ -116,7 +116,7 @@ class Scheduler:
             task = Task(priority=Priority.HIGH, content=task_content)
             await self.queue.put(task)
             section = "GOOD" if is_good else "NORMAL"
-            self.log.info(f"Scheduled {section} homepage scan for [{forum.fname}吧] with priority=HIGH")
+            self.log.debug(f"Scheduled {section} homepage scan for [{forum.fname}吧] with priority=HIGH")
 
     async def _schedule_backfill_homepage(self, forum: Forum, max_pages: int, *, is_good: bool = False):
         """为单个贴吧调度回溯任务的起点页面，由 Worker 递推后续页。
@@ -140,7 +140,7 @@ class Scheduler:
         task = Task(priority=Priority.LOW, content=task_content)
         await self.queue.put(task)
         section = "GOOD" if is_good else "NORMAL"
-        self.log.info(
+        self.log.debug(
             f"Scheduled BACKFILL [{section}] start pn={start_pn} for [{forum.fname}吧] "
             f"with priority=LOW (max_pages={max_pages})."
         )

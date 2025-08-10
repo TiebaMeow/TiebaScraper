@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from ..models import Forum
 
 
-log = logging.getLogger(__name__)
+log = logging.getLogger("container")
 
 
 class Container:

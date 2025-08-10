@@ -15,7 +15,7 @@ from ..config import Config
 from ..models import Base, Forum
 from .container import Container
 
-log = logging.getLogger(__name__)
+log = logging.getLogger("initialize")
 
 
 async def initialize_application(

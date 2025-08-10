@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
     T_Aiotieba = aiotieba.Thread | aiotieba.Post | aiotieba.Comment
 
-log = logging.getLogger(__name__)
+log = logging.getLogger("models")
 
 T_AiotiebaConvertible = TypeVar("T_AiotiebaConvertible", bound="AiotiebaConvertible")
 

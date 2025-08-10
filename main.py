@@ -15,9 +15,11 @@ from typing import Literal
 
 from src.core import initialize_application
 from src.scraper import Scheduler, Worker
+from src.utils.logging import setup_logging
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-log = logging.getLogger(__name__)
+# 统一日志配置（可用环境变量 LOG_LEVEL 覆盖级别）
+setup_logging()
+log = logging.getLogger("main")
 
 
 async def main(mode: Literal["periodic", "backfill", "hybrid"] = "periodic"):
@@ -90,10 +92,11 @@ def setup_event_loop():
             asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
         except ImportError:
-            log.exception("uvloop is not installed, falling back to the default asyncio event loop.")
+            # 非关键依赖，降低为 warning，避免冗长堆栈
+            log.warning("uvloop not installed; using default asyncio event loop.")
 
-        except Exception:
-            log.exception("Failed to set up uvloop, falling back to the default asyncio event loop.")
+        except Exception as e:
+            log.warning(f"Failed to set up uvloop; using default asyncio event loop. Error: {e}")
 
     else:
         log.info("Running on Windows, using the default ProactorEventLoop.")

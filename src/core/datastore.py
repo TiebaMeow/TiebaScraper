@@ -20,7 +20,7 @@ from .container import Container
 ModelType = TypeVar("ModelType", Comment, Forum, Post, Thread, User)
 ItemType = Literal["thread", "post", "comment"]
 
-log = logging.getLogger(__name__)
+log = logging.getLogger("datastore")
 
 CONSUMER_QUEUE_KEY = "consumer:queue"
 PRIMARY_KEY_MAP = {
@@ -217,7 +217,7 @@ class DataStore:
 
                 await session.execute(statement)
                 await session.commit()
-                log.info(f"Successfully saved/ignored {len(items)} items using ON CONFLICT.")
+                log.debug(f"Successfully saved/ignored {len(items)} items using ON CONFLICT.")
 
             except IntegrityError as e:
                 log.error(f"An unexpected integrity error occurred: {e}")
