@@ -61,6 +61,8 @@ class ScanThreadsTask:
     pn: int
     rn: int = 30
     is_good: bool = False
+    backfill: bool = False
+    max_pages: int = 100
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -74,6 +76,7 @@ class FullScanPostsTask:
 
     tid: int
     rn: int = 30
+    backfill: bool = False
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -91,6 +94,7 @@ class IncrementalScanPostsTask:
     last_time: int
     last_floor: int = 1
     rn: int = 30
+    backfill: bool = False
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -104,6 +108,7 @@ class FullScanCommentsTask:
 
     tid: int
     pid: int
+    backfill: bool = False
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -119,6 +124,7 @@ class IncrementalScanCommentsTask:
 
     tid: int
     pid: int
+    backfill: bool = False
 
 
 @dataclasses.dataclass(slots=True, frozen=True)

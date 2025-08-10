@@ -18,7 +18,9 @@ from .container import Container
 log = logging.getLogger(__name__)
 
 
-async def initialize_application(mode: Literal["periodic", "backfill"]) -> tuple[Container, asyncio.PriorityQueue]:
+async def initialize_application(
+    mode: Literal["periodic", "backfill", "hybrid"],
+) -> tuple[Container, asyncio.PriorityQueue]:
     """初始化整个应用程序。
 
     该函数封装了应用启动所需的所有核心初始化步骤：
@@ -29,7 +31,7 @@ async def initialize_application(mode: Literal["periodic", "backfill"]) -> tuple
     5. 创建主任务队列。
 
     Args:
-        mode: 应用程序的运行模式 ("periodic" 或 "backfill")。
+    mode: 应用程序的运行模式 ("periodic"、"backfill" 或 "hybrid")。
 
     Returns:
         一个元组，包含初始化完成的容器实例和任务队列。

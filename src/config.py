@@ -117,16 +117,16 @@ class Config:
     CONFIG_FILE: ClassVar[Path] = BASE_DIR / "config.toml"
 
     pydantic_config: PydanticConfig
-    mode: Literal["periodic", "backfill"]
+    mode: Literal["periodic", "backfill", "hybrid"]
 
-    def __init__(self, mode: Literal["periodic", "backfill"] = "periodic"):
+    def __init__(self, mode: Literal["periodic", "backfill", "hybrid"] = "periodic"):
         """初始化配置对象。
 
         从配置文件中加载各项配置，构建数据库和Redis连接URL，
         并设置爬虫相关的限制参数。
 
         Args:
-            mode: 运行模式，可选值为'periodic'(周期性)或'backfill'(回溯)。
+            mode: 运行模式，可选值为'periodic'(周期性)、'backfill'(回溯)或'hybrid'(混合)。
                 默认为'periodic'。
         """
         config_data = self._load_toml()

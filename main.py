@@ -1,15 +1,17 @@
 """Tieba爬虫应用程序主入口模块。
 
-该模块提供了两种运行模式的实现：
+该模块提供三种运行模式：
 1. 周期性模式(periodic): 持续监控指定论坛的最新内容
-2. 回溯模式(backfill): 抓取指定论坛的历史数据
+2. 回溯模式(backfill): 抓取指定论坛的历史数据（仅投递首页，由 Worker 递推）
+3. 混合模式(hybrid): 周期监控首页 + 一次性触发回溯首页
 
-使用面向对象的架构设计，通过调度器和工作器的配合来实现高效的异步爬虫系统。
+统一入口 main(mode) 根据模式分支启动相应组件。
 """
 
 import asyncio
 import logging
 import platform
+from typing import Literal
 
 from src.core import initialize_application
 from src.scraper import Scheduler, Worker
@@ -18,36 +20,50 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 log = logging.getLogger(__name__)
 
 
-async def main_periodic():
-    """运行周期性监控模式的主函数。
+async def main(mode: Literal["periodic", "backfill", "hybrid"] = "periodic"):
+    """统一入口，根据模式启动应用。
 
-    该函数创建并启动一个完整的爬虫系统，包括：
-    - 依赖注入容器的初始化
-    - 任务队列的设置
-    - 调度器实例用于生成扫描任务
-    - 多个工作器实例用于并发处理任务
-
-    运行模式为周期性模式，会持续监控配置中指定的论坛。
-
-    Raises:
-        Exception: 当应用程序启动或运行过程中发生错误时抛出。
+    - periodic: 周期性调度器 + 多 worker，常驻运行。
+    - backfill: 一次性回溯调度器 + 多 worker；等待队列清空后优雅退出。
+    - hybrid: 周期调度器常驻 + 回溯调度器跑一轮 + 多 worker。
     """
-    container, task_queue = await initialize_application(mode="periodic")
+    container, task_queue = await initialize_application(mode=mode)
 
     tasks: list[asyncio.Task] = []
     try:
-        log.info("Starting application in periodic mode.")
+        log.info(f"Starting application in {mode} mode.")
 
-        scheduler_instance = Scheduler(queue=task_queue, container=container)
-        worker_instances = [Worker(i, task_queue, container) for i in range(3)]
+        scheduler = Scheduler(queue=task_queue, container=container)
+        worker_count = 3 if mode == "periodic" else 5
+        workers = [Worker(i, task_queue, container) for i in range(worker_count)]
 
-        tasks.append(asyncio.create_task(scheduler_instance.run(mode="periodic"), name="scheduler"))
-        tasks.extend(asyncio.create_task(w.run(), name=f"worker-{i}") for i, w in enumerate(worker_instances))
+        if mode == "periodic":
+            tasks.append(asyncio.create_task(scheduler.run(mode="periodic"), name="scheduler"))
+            tasks.extend(asyncio.create_task(w.run(), name=f"worker-{i}") for i, w in enumerate(workers))
+            await asyncio.gather(*tasks)
 
-        await asyncio.gather(*tasks)
+        elif mode == "backfill":
+            scheduler_task = asyncio.create_task(scheduler.run(mode="backfill"), name="scheduler")
+            worker_tasks = [asyncio.create_task(w.run(), name=f"worker-{i}") for i, w in enumerate(workers)]
+            tasks.append(scheduler_task)
+            tasks.extend(worker_tasks)
+
+            await scheduler_task
+            await task_queue.join()
+
+        else:  # hybrid
+            periodic_task = asyncio.create_task(scheduler.run(mode="periodic"), name="scheduler-periodic")
+            tasks.append(periodic_task)
+
+            backfill_task = asyncio.create_task(scheduler.run(mode="backfill"), name="scheduler-backfill")
+            tasks.append(backfill_task)
+
+            tasks.extend(asyncio.create_task(w.run(), name=f"worker-{i}") for i, w in enumerate(workers))
+
+            await asyncio.gather(*tasks)
 
     except asyncio.CancelledError:
-        log.info("Received cancellation in periodic mode.")
+        log.info(f"Received cancellation in {mode} mode.")
         raise
 
     except Exception as e:
@@ -56,60 +72,6 @@ async def main_periodic():
     finally:
         for t in tasks:
             if not t.done():
-                t.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-
-        log.info("Shutting down application...")
-        await container.teardown()
-
-
-async def main_backfill():
-    """使用回溯模式的主函数。
-
-    该函数运行历史数据回溯模式，用于抓取指定论坛的历史数据。
-    与周期性模式不同，回溯模式会在完成所有历史数据抓取后自动结束。
-
-    运行流程：
-    1. 创建调度器生成历史页面扫描任务
-    2. 启动多个工作器处理任务
-    3. 等待调度器完成任务生成
-    4. 等待所有任务处理完成
-    5. 优雅关闭工作器
-
-    Raises:
-        Exception: 当应用程序启动或运行过程中发生错误时抛出。
-    """
-    container, task_queue = await initialize_application(mode="backfill")
-
-    tasks: list[asyncio.Task] = []
-    try:
-        log.info("Starting application with OOP interface in backfill mode.")
-
-        scheduler_instance = Scheduler(queue=task_queue, container=container)
-        worker_instances = [Worker(i, task_queue, container) for i in range(5)]
-
-        scheduler_task = asyncio.create_task(scheduler_instance.run(mode="backfill"), name="scheduler")
-        worker_tasks = [
-            asyncio.create_task(worker.run(), name=f"worker-{i}") for i, worker in enumerate(worker_instances)
-        ]
-
-        tasks.append(scheduler_task)
-        tasks.extend(worker_tasks)
-
-        await scheduler_task
-        await task_queue.join()
-
-    except asyncio.CancelledError:
-        log.info("Received cancellation in backfill mode.")
-        raise
-
-    except Exception as e:
-        log.exception(f"Application failed to start or run: {e}")
-
-    finally:
-        for t in tasks:
-            if t.get_name().startswith("worker-") and not t.done():
                 t.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -143,18 +105,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Tieba Scraper Application")
     parser.add_argument(
         "--mode",
-        choices=["periodic", "backfill"],
+        choices=["periodic", "backfill", "hybrid"],
         default="periodic",
-        help="Running mode: 'periodic' for continuous monitoring, 'backfill' for historical data.",
+        help=("Running mode: 'periodic' for continuous monitoring, 'backfill' for historical data, 'hybrid' for both."),
     )
     args = parser.parse_args()
 
     setup_event_loop()
 
     try:
-        if args.mode == "periodic":
-            asyncio.run(main_periodic())
-        else:
-            asyncio.run(main_backfill())
+        asyncio.run(main(args.mode))
     except KeyboardInterrupt:
         log.info("Application stopped by user.")

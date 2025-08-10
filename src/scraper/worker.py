@@ -104,6 +104,8 @@ class ThreadsTaskHandler(TaskHandler):
         pn = task_content.pn
         rn = task_content.rn
         is_good = task_content.is_good
+        backfill = task_content.backfill
+        max_pages = task_content.max_pages
 
         try:
             threads_data = await self.container.tb_client.get_threads(fname, pn=pn, rn=rn, is_good=is_good)  # type: ignore
@@ -119,14 +121,27 @@ class ThreadsTaskHandler(TaskHandler):
             old_tids = set(all_tids) - new_tids
             self.log.info(f"{fname}吧, pn={pn}: Found {len(all_tids)} threads, {len(new_tids)} are new.")
 
-            await self._process_new_threads(threads_data, new_tids)
+            await self._process_new_threads(threads_data, new_tids, backfill)
 
-            await self._process_old_threads(threads_data, old_tids)
+            await self._process_old_threads(threads_data, old_tids, backfill)
+
+            if backfill and pn < max_pages and threads_data.has_more:
+                next_task_content = ScanThreadsTask(
+                    fid=task_content.fid,
+                    fname=fname,
+                    pn=pn + 1,
+                    rn=rn,
+                    is_good=is_good,
+                    backfill=backfill,
+                    max_pages=max_pages,
+                )
+                await self.queue.put(Task(priority=Priority.LOW, content=next_task_content))
+                self.log.debug(f"Scheduled backfill ScanThreadsTask for {fname}吧, pn={pn + 1}")
 
         except Exception as e:
             self.log.exception(f"Failed to process ScanThreadsTask for {fname}吧, pn={pn}: {e}")
 
-    async def _process_new_threads(self, threads_data: Threads, new_tids: set[int]):
+    async def _process_new_threads(self, threads_data: Threads, new_tids: set[int], backfill: bool):
         """处理新发现的主题贴。
 
         主要流程：
@@ -150,15 +165,15 @@ class ThreadsTaskHandler(TaskHandler):
         self.log.info(f"Saved {len(new_threads)} new threads to DB.")
 
         for thread in new_threads:
-            if self.container.config.mode != "backfill":
+            if not backfill:
                 await self.datastore.push_to_consumer_queue("thread", thread.tid)
                 self.log.debug(f"Pushed new thread tid={thread.tid} to consumer queue.")
 
-            new_task_content = FullScanPostsTask(tid=thread.tid)
+            new_task_content = FullScanPostsTask(tid=thread.tid, backfill=backfill)
             await self.queue.put(Task(priority=Priority.MEDIUM, content=new_task_content))
             self.log.debug(f"Scheduled FullScanPostsTask for new tid={thread.tid}")
 
-    async def _process_old_threads(self, threads_data: Threads, old_tids: set[int]):
+    async def _process_old_threads(self, threads_data: Threads, old_tids: set[int], backfill: bool):
         """处理已存在的主题贴，检查是否有更新。
 
         主要流程：
@@ -190,7 +205,10 @@ class ThreadsTaskHandler(TaskHandler):
                 thread_to_update.append(thread_data)
 
                 update_task_content = IncrementalScanPostsTask(
-                    tid=thread_data.tid, last_time=thread_data.last_time, last_floor=stored_thread.reply_num
+                    tid=thread_data.tid,
+                    last_time=thread_data.last_time,
+                    last_floor=stored_thread.reply_num,
+                    backfill=backfill,
                 )
                 await self.queue.put(Task(priority=Priority.MEDIUM, content=update_task_content))
                 self.log.debug(f"Scheduled IncrementalScanPostsTask for updated tid={thread_data.tid}")
@@ -218,6 +236,7 @@ class FullScanPostsTaskHandler(TaskHandler):
         tid = task_content.tid
         rn = task_content.rn
         pn = 1
+        backfill = task_content.backfill
 
         processed_num = 0
 
@@ -236,7 +255,7 @@ class FullScanPostsTaskHandler(TaskHandler):
                     self.log.info(f"No posts found for tid={tid}, pn={pn}. Task finished.")
                     return
 
-                await self._process_posts_on_page(tid, page)
+                await self._process_posts_on_page(tid, page, backfill)
                 processed_num += len(page.objs)
 
                 if not page.page.has_more:
@@ -252,7 +271,7 @@ class FullScanPostsTaskHandler(TaskHandler):
         except Exception as e:
             self.log.exception(f"Failed to process ScanThreadTask for tid={tid}: {e}")
 
-    async def _process_posts_on_page(self, tid: int, posts_page: Posts):
+    async def _process_posts_on_page(self, tid: int, posts_page: Posts, backfill: bool):
         """处理单个页面上的所有回复。
 
         主要流程：
@@ -270,7 +289,7 @@ class FullScanPostsTaskHandler(TaskHandler):
         await self.datastore.save_items(post_models)
 
         for post in posts_page.objs:
-            if self.container.config.mode != "backfill":
+            if not backfill:
                 await self.datastore.push_to_consumer_queue("post", post.pid)
                 self.log.debug(f"Pushed post pid={post.pid} to consumer queue.")
 
@@ -280,7 +299,7 @@ class FullScanPostsTaskHandler(TaskHandler):
             await self.datastore.save_items(comment_models)
 
             if post.reply_num > 10 or len(post.comments) != post.reply_num:
-                comment_task = FullScanCommentsTask(tid=tid, pid=post.pid)
+                comment_task = FullScanCommentsTask(tid=tid, pid=post.pid, backfill=backfill)
                 await self.queue.put(Task(priority=Priority.LOW, content=comment_task))
                 self.log.debug(f"Scheduled FullScanCommentsTask for pid={post.pid} in tid={tid}")
 
@@ -305,6 +324,7 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
         last_time = task_content.last_time
         last_floor = task_content.last_floor
         rn = task_content.rn
+        backfill = task_content.backfill
 
         try:
             latest_page = await self.container.tb_client.get_posts(  # type: ignore
@@ -325,7 +345,7 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
 
             self.log.info(f"Incremental scan for tid={tid}. Starting from page {start_pn}.")
 
-            await self._scan_thread_pages(tid, start_pn, rn, last_time, last_floor, latest_page)
+            await self._scan_thread_pages(tid, start_pn, rn, last_time, last_floor, latest_page, backfill)
 
             self.log.info(f"Finished incremental scan for tid={tid}.")
 
@@ -333,7 +353,14 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
             self.log.exception(f"Failed to process IncrementalScanPostsTask for tid={tid}: {e}")
 
     async def _scan_thread_pages(
-        self, tid: int, start_pn: int, rn: int, last_time: int, last_floor: int, initial_page_data: Posts
+        self,
+        tid: int,
+        start_pn: int,
+        rn: int,
+        last_time: int,
+        last_floor: int,
+        initial_page_data: Posts,
+        backfill: bool,
     ):
         """倒序扫描主题贴回复页面。
 
@@ -367,7 +394,7 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
                 self.log.warning(f"No posts found on tid={tid}, pn={pn}. Skipping page.")
                 continue
 
-            has_more = await self._process_posts_on_page(last_time, last_floor, posts_page)
+            has_more = await self._process_posts_on_page(last_time, last_floor, posts_page, backfill)
 
             if not has_more:
                 self.log.info(f"No new posts found on tid={tid}, pn={pn}. Stopping scan.")
@@ -385,9 +412,9 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
 
         if hot_page and hot_page.objs:
             self.log.info(f"Hot posts for tid={tid} found on page 1. Processing hot posts.")
-            await self._process_posts_on_page(last_time, last_floor, hot_page)
+            await self._process_posts_on_page(last_time, last_floor, hot_page, backfill)
 
-    async def _process_posts_on_page(self, last_time: int, last_floor: int, posts_page: Posts) -> bool:
+    async def _process_posts_on_page(self, last_time: int, last_floor: int, posts_page: Posts, backfill: bool) -> bool:
         """处理单个页面上的所有回复。
 
         主要流程：
@@ -418,9 +445,9 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
             f"tid={posts_page.thread.tid}, pn={posts_page.page.current_page}: Found {len(new_pids)} new posts."
         )
 
-        await self._process_new_posts(new_pids, posts_page)
+        await self._process_new_posts(new_pids, posts_page, backfill)
 
-        await self._process_old_posts(old_pids, posts_page)
+        await self._process_old_posts(old_pids, posts_page, backfill)
 
         await self._process_attached_comments(posts_page)
 
@@ -429,7 +456,7 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
 
         return True
 
-    async def _process_new_posts(self, new_pids: set[int], posts_page: Posts):
+    async def _process_new_posts(self, new_pids: set[int], posts_page: Posts, backfill: bool):
         """处理新发现的回复。
 
         主要流程：
@@ -453,16 +480,16 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
         self.log.info(f"Saved {len(new_posts)} new posts to DB.")
 
         for post in new_posts:
-            if self.container.config.mode != "backfill":
+            if not backfill:
                 await self.datastore.push_to_consumer_queue("post", post.pid)
                 self.log.debug(f"Pushed new post pid={post.pid} to consumer queue.")
 
             if post.reply_num > 10 or len(post.comments) != post.reply_num:
-                comment_task = FullScanCommentsTask(tid=post.tid, pid=post.pid)
+                comment_task = FullScanCommentsTask(tid=post.tid, pid=post.pid, backfill=backfill)
                 await self.queue.put(Task(priority=Priority.LOW, content=comment_task))
                 self.log.debug(f"Scheduled FullScanCommentsTask for new pid={post.pid} in tid={post.tid}")
 
-    async def _process_old_posts(self, old_pids: set[int], posts_page: Posts):
+    async def _process_old_posts(self, old_pids: set[int], posts_page: Posts, backfill: bool):
         """处理已存在的回复，检查是否有更新。
 
         主要流程：
@@ -491,7 +518,11 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
                 )
                 posts_to_update.append(post_data)
 
-                update_task_content = IncrementalScanCommentsTask(tid=post_data.tid, pid=post_data.pid)
+                update_task_content = IncrementalScanCommentsTask(
+                    tid=post_data.tid,
+                    pid=post_data.pid,
+                    backfill=backfill,
+                )
                 await self.queue.put(Task(priority=Priority.LOW, content=update_task_content))
                 self.log.debug(f"Scheduled IncrementalScanCommentsTask for updated pid={post_data.pid}")
 
@@ -541,6 +572,7 @@ class FullScanCommentsTaskHandler(TaskHandler):
         """
         tid = task_content.tid
         pid = task_content.pid
+        backfill = task_content.backfill
 
         try:
             initial_page_data = await self.container.tb_client.get_comments(tid, pid, pn=1)  # type: ignore
@@ -553,14 +585,14 @@ class FullScanCommentsTaskHandler(TaskHandler):
                 f"Scanning comments for pid={pid}, tid={tid}. Total pages: {initial_page_data.page.total_page}."
             )
 
-            await self._scan_comment_pages(tid, pid, initial_page_data)
+            await self._scan_comment_pages(tid, pid, initial_page_data, backfill)
 
             self.log.info(f"Finished comment scan for pid={pid} in tid={tid}.")
 
         except Exception as e:
             self.log.exception(f"Failed to process ScanPostCommentsTask for pid={pid}, tid={tid}: {e}")
 
-    async def _scan_comment_pages(self, tid: int, pid: int, initial_page_data: Comments):
+    async def _scan_comment_pages(self, tid: int, pid: int, initial_page_data: Comments, backfill: bool):
         """扫描楼中楼的所有页面。
 
         Args:
@@ -587,7 +619,7 @@ class FullScanCommentsTaskHandler(TaskHandler):
                 self.log.warning(f"No comments found on pid={pid}, pn={pn}. Stopping scan.")
                 break
 
-            await self._process_comments_on_page(pid, pn, comments_page)
+            await self._process_comments_on_page(pid, pn, comments_page, backfill)
 
             processed_num += len(comments_page.objs)
 
@@ -595,7 +627,7 @@ class FullScanCommentsTaskHandler(TaskHandler):
                 await asyncio.sleep(0)
                 processed_num = 0
 
-    async def _process_comments_on_page(self, pid: int, pn: int, comments_page: Comments):
+    async def _process_comments_on_page(self, pid: int, pn: int, comments_page: Comments, backfill: bool):
         """处理单个页面上的所有楼中楼。
 
         主要流程：
@@ -624,7 +656,7 @@ class FullScanCommentsTaskHandler(TaskHandler):
         await self.datastore.save_items(new_comment_models)
 
         for comment in new_comments_data:
-            if self.container.config.mode != "backfill":
+            if not backfill:
                 await self.datastore.push_to_consumer_queue("comment", comment.pid)
                 self.log.debug(f"Pushed comment pid={comment.pid} to consumer queue.")
 
@@ -647,6 +679,7 @@ class IncrementalScanCommentsTaskHandler(TaskHandler):
         """
         tid = task_content.tid
         pid = task_content.pid
+        backfill = task_content.backfill
 
         try:
             comments_page = await self.container.tb_client.get_comments(tid, pid)  # type: ignore
@@ -657,12 +690,19 @@ class IncrementalScanCommentsTaskHandler(TaskHandler):
 
             total_pages = comments_page.page.total_page
 
-            await self._scan_comment_pages(tid, pid, total_pages, comments_page)
+            await self._scan_comment_pages(tid, pid, total_pages, comments_page, backfill)
 
         except Exception as e:
             self.log.exception(f"Failed to process IncrementalScanCommentsTask for pid={pid}, tid={tid}: {e}")
 
-    async def _scan_comment_pages(self, tid: int, pid: int, total_pages: int, initial_page_data: Comments):
+    async def _scan_comment_pages(
+        self,
+        tid: int,
+        pid: int,
+        total_pages: int,
+        initial_page_data: Comments,
+        backfill: bool,
+    ):
         """扫描楼中楼的所有页面。
 
         从最后一页开始，逐页倒序扫描指定回复下的所有楼中楼。
@@ -685,13 +725,13 @@ class IncrementalScanCommentsTaskHandler(TaskHandler):
                 self.log.warning(f"No comments found on pid={pid}, pn={pn}. Stopping scan.")
                 break
 
-            has_more = await self._process_comments_on_page(pid, pn, comments_page)
+            has_more = await self._process_comments_on_page(pid, pn, comments_page, backfill)
 
             if not has_more:
                 self.log.info(f"No new comments found on pid={pid}, pn={pn}. Stopping scan.")
                 break
 
-    async def _process_comments_on_page(self, pid: int, pn: int, comments_page: Comments) -> bool:
+    async def _process_comments_on_page(self, pid: int, pn: int, comments_page: Comments, backfill: bool) -> bool:
         """处理单个页面上的所有楼中楼。
 
         主要流程：
@@ -721,7 +761,7 @@ class IncrementalScanCommentsTaskHandler(TaskHandler):
         await self.datastore.save_items(new_comment_models)
 
         for comment in new_comments_data:
-            if self.container.config.mode != "backfill":
+            if not backfill:
                 await self.datastore.push_to_consumer_queue("comment", comment.pid)
                 self.log.debug(f"Pushed comment pid={comment.pid} to consumer queue.")
 
