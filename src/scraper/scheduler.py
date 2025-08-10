@@ -116,7 +116,7 @@ class Scheduler:
             task = Task(priority=Priority.HIGH, content=task_content)
             await self.queue.put(task)
             section = "GOOD" if is_good else "NORMAL"
-            self.log.info(f"Scheduled {section} homepage scan for [{forum.fname}吧] with priority={Priority.HIGH.name}")
+            self.log.info(f"Scheduled {section} homepage scan for [{forum.fname}吧] with priority=HIGH")
 
     async def _schedule_backfill_homepage(self, forum: Forum, max_pages: int, *, is_good: bool = False):
         """为单个贴吧调度回溯任务的起点页面，由 Worker 递推后续页。
@@ -142,5 +142,5 @@ class Scheduler:
         section = "GOOD" if is_good else "NORMAL"
         self.log.info(
             f"Scheduled BACKFILL [{section}] start pn={start_pn} for [{forum.fname}吧] "
-            f"with priority={Priority.LOW.name} (max_pages={max_pages})."
+            f"with priority=LOW (max_pages={max_pages})."
         )

@@ -165,13 +165,15 @@ class ThreadsTaskHandler(TaskHandler):
         await self.datastore.save_items(new_thread_models)
         self.log.info(f"Saved {len(new_threads)} new threads to DB.")
 
+        priority = Priority.LOW if backfill else Priority.MEDIUM
+
         for thread in new_threads:
             if not backfill:
                 await self.datastore.push_to_consumer_queue("thread", thread.tid)
                 self.log.debug(f"Pushed new thread tid={thread.tid} to consumer queue.")
 
             new_task_content = FullScanPostsTask(tid=thread.tid, backfill=backfill)
-            await self.queue.put(Task(priority=Priority.MEDIUM, content=new_task_content))
+            await self.queue.put(Task(priority=priority, content=new_task_content))
             self.log.debug(f"Scheduled FullScanPostsTask for new tid={thread.tid}")
 
     async def _process_old_threads(self, threads_data: Threads, old_tids: set[int], backfill: bool):
@@ -211,7 +213,7 @@ class ThreadsTaskHandler(TaskHandler):
                     last_floor=stored_thread.reply_num,
                     backfill=backfill,
                 )
-                await self.queue.put(Task(priority=Priority.MEDIUM, content=update_task_content))
+                await self.queue.put(Task(priority=Priority.HIGH, content=update_task_content))
                 self.log.debug(f"Scheduled IncrementalScanPostsTask for updated tid={thread_data.tid}")
 
         if thread_to_update:
@@ -524,7 +526,7 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
                     pid=post_data.pid,
                     backfill=backfill,
                 )
-                await self.queue.put(Task(priority=Priority.LOW, content=update_task_content))
+                await self.queue.put(Task(priority=Priority.MEDIUM, content=update_task_content))
                 self.log.debug(f"Scheduled IncrementalScanCommentsTask for updated pid={post_data.pid}")
 
         if posts_to_update:

@@ -19,9 +19,9 @@ class Priority(IntEnum):
     - LOW: 历史数据回溯、楼中楼扫描和深度扫描任务
     """
 
-    HIGH = 1  # ScanThreads
-    MEDIUM = 2  # FullScanPosts, IncrementalScanPosts
-    LOW = 3  # FullScanComments, IncrementalScanComments, DeepScan
+    HIGH = 1  # ScanThreads, IncrementalScanPosts
+    MEDIUM = 2  # FullScanPosts, IncrementalScanComments
+    LOW = 3  # FullScanComments, DeepScan
 
 
 @dataclasses.dataclass(order=True, slots=True, frozen=True)
