@@ -281,6 +281,7 @@ class DataStore:
                 async with self.container.db_engine.connect() as conn:  # type: ignore
                     ac_conn = await conn.execution_options(isolation_level="AUTOCOMMIT")
                     await ac_conn.execute(text(f"CALL partman.partition_data_proc('public.{table}');"))
+                    await ac_conn.execute(text(f"VACUUM ANALYZE {table};"))
 
             async with self.container.db_engine.connect() as conn:  # type: ignore
                 ac_conn = await conn.execution_options(isolation_level="AUTOCOMMIT")
