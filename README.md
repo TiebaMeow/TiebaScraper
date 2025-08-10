@@ -28,25 +28,7 @@ _基于 aiotieba 的高性能百度贴吧异步爬虫工具，支持实时监控
 
 为了支持数据分区存储，避免单表数据量过大，我们将使用 `pg_partman` 插件来管理 PostgreSQL 数据库中的分区表。
 
-请确保 PostgreSQL 数据库与 `pg_partman` 插件已安装。Linux 用户可以参考 `pg_partman` 官方文档，使用 `make install` 命令安装插件。Windows 用户可以使用 WSL 或 Docker，也可以参考以下步骤：
-
-> 1. 安装 [MSYS2](https://www.msys2.org/) 或类似环境
-> 2. clone `pg_partman` 仓库到本地
-> 3. 在 `pg_partman` 目录下创建并执行以下脚本：
-
-```bash
-#!/bin/bash
-EXTENSION=pg_partman
-VERSION=$(grep default_version $EXTENSION.control | \
-          sed -e "s/default_version[[:space:]]*=[[:space:]]*'\([^']*\)'/\1/")
-
-cat sql/types/*.sql > "${EXTENSION}--${VERSION}.sql"
-cat sql/tables/*.sql >> "${EXTENSION}--${VERSION}.sql"
-cat sql/functions/*.sql >> "${EXTENSION}--${VERSION}.sql"
-cat sql/procedures/*.sql >> "${EXTENSION}--${VERSION}.sql"
-```
-
-> 4. 将生成的 `pg_partman--<version>.sql` 和 `pg_partman.control` 文件复制到 `C:\Program Files\PostgreSQL\<version>\share\extension` 目录下
+请确保 PostgreSQL 数据库与 `pg_partman` 插件已安装。Linux 用户可以参考 `pg_partman` 官方文档，使用 `make install` 命令安装插件。Windows 用户可以使用 WSL 或 Docker，如果一定要使用 Windows 原生 PostgreSQL，请参考[Windows用户配置](#windows用户配置)
 
 请为 `TiebaScraper` 创建一个单独的数据库（名称可以自定义）：
 
@@ -60,6 +42,28 @@ CREATE DATABASE tieba_data;
 CREATE USER your_username WITH PASSWORD 'your_password';
 GRANT ALL PRIVILEGES ON DATABASE tieba_data TO your_username;
 ```
+
+## Windows用户配置
+
+1. 安装 [MSYS2](https://www.msys2.org/) 或类似环境
+2. clone `pg_partman` 仓库到本地
+3. 在 `pg_partman` 目录下创建并执行以下脚本：
+
+```bash
+#!/bin/bash
+EXTENSION=pg_partman
+VERSION=$(grep default_version $EXTENSION.control | \
+          sed -e "s/default_version[[:space:]]*=[[:space:]]*'\([^']*\)'/\1/")
+
+cat sql/types/*.sql > "${EXTENSION}--${VERSION}.sql"
+cat sql/tables/*.sql >> "${EXTENSION}--${VERSION}.sql"
+cat sql/functions/*.sql >> "${EXTENSION}--${VERSION}.sql"
+cat sql/procedures/*.sql >> "${EXTENSION}--${VERSION}.sql"
+```
+
+你也可以将上面的脚本使用 AI 翻译为 PowerShell 脚本，这样就无需 MSYS2 等类Unix环境。
+
+4. 将生成的 `pg_partman--<version>.sql` 和 `pg_partman.control` 文件复制到 `C:\Program Files\PostgreSQL\<version>\share\extension` 目录下
 
 ## 安装依赖
 
@@ -94,6 +98,8 @@ uv sync --extra speedup
   - `username`: Redis 用户名，没有可以留空为 `""`
   - `password`: Redis 密码，没有可以留空为 `""`
 
+请根据你的数据量合理设置 `p_interval` 和 `p_premake` 的值，以确保单个分区不会太大，以及默认分区不会有太多数据。
+
 ## 使用方法
 
 ### 实时监控模式
@@ -104,6 +110,8 @@ uv sync --extra speedup
 uv run python main.py
 ```
 
+实时监控模式将会自动定期维护分区，为默认分区（未命中当前分区时间范围的数据）中的数据创建合适的分区，并将其迁移到相应的分区中。
+
 ### 历史数据回溯模式
 
 历史数据回溯模式下，程序将根据用户定义的深度抓取指定贴吧的历史数据。
@@ -112,6 +120,15 @@ uv run python main.py
 uv run python main.py --mode backfill
 ```
 
+历史数据回溯模式下，你需要手动维护分区：
+
+```sql
+CALL partman.partition_data_proc('public.{table}');
+CALL partman.run_maintenance_proc();
+```
+
+将 `{table}` 替换为 `thread`, `post`, `comment` 分别执行。
+
 ### 混合模式
 
 混合模式下，程序将同时运行实时监控和历史数据回溯。
@@ -119,6 +136,8 @@ uv run python main.py --mode backfill
 ```bash
 uv run python main.py --mode hybrid
 ```
+
+混合模式下，程序也将自动定期维护分区。
 
 ## 项目结构
 

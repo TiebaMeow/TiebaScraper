@@ -61,6 +61,9 @@ class SchedulerConfig(BaseModel):
     """调度器配置模型"""
 
     interval_seconds: int = Field(60, gt=0)
+    good_page_every_n_ticks: int = Field(10, gt=0)
+    maintenance_every_n_ticks: int = Field(10, gt=0)
+    maintenance_enabled: bool = True
 
 
 class PydanticConfig(BaseModel):
@@ -70,7 +73,11 @@ class PydanticConfig(BaseModel):
     redis: RedisConfig = Field(default_factory=RedisConfig)
     tieba: TiebaConfig
     rate_limit: RateLimitConfig = Field(default_factory=lambda: RateLimitConfig(rps=10, concurrency=8))
-    scheduler: SchedulerConfig = Field(default_factory=lambda: SchedulerConfig(interval_seconds=60))
+    scheduler: SchedulerConfig = Field(
+        default_factory=lambda: SchedulerConfig(
+            interval_seconds=60, good_page_every_n_ticks=10, maintenance_every_n_ticks=10
+        )
+    )
 
     @computed_field
     @property
@@ -190,6 +197,18 @@ class Config:
     def scheduler_interval_seconds(self) -> int:
         return self.pydantic_config.scheduler.interval_seconds
 
+    @property
+    def good_page_every_ticks(self) -> int:
+        return self.pydantic_config.scheduler.good_page_every_n_ticks
+
+    @property
+    def maintenance_every_ticks(self) -> int:
+        return self.pydantic_config.scheduler.maintenance_every_n_ticks
+
+    @property
+    def maintenance_enabled(self) -> bool:
+        return self.pydantic_config.scheduler.maintenance_enabled
+
     def __repr__(self) -> str:
         """返回配置对象的字符串表示。
 
@@ -202,5 +221,6 @@ class Config:
             f"BDUSS={self.BDUSS}, forums={self.forums}, "
             f"rps_limit={self.rps_limit}, concurrency_limit={self.concurrency_limit}, "
             f"scheduler_interval_seconds={self.scheduler_interval_seconds}, "
-            f"mode={self.mode})"
+            f"maintenance_enabled={self.maintenance_enabled}, maintenance_every_ticks={self.maintenance_every_ticks}, "
+            f"good_page_every_ticks={self.good_page_every_ticks}, mode={self.mode})"
         )

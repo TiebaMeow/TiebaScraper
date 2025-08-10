@@ -34,6 +34,7 @@ from .tasks import (
     FullScanPostsTask,
     IncrementalScanCommentsTask,
     IncrementalScanPostsTask,
+    PartmanMaintenanceTask,
     Priority,
     ScanThreadsTask,
     Task,
@@ -854,4 +855,15 @@ class Worker:
         if handler:
             await handler.handle(content)
         else:
-            self.log.warning(f"Unknown task type: {type(content)}")
+            if isinstance(content, PartmanMaintenanceTask):
+                await self._handle_partman_maintenance()
+            else:
+                self.log.warning(f"Unknown task type: {type(content)}")
+
+    async def _handle_partman_maintenance(self):
+        """执行 pg_partman 维护过程。"""
+        try:
+            await self.datastore.run_partition_maintenance()
+            self.log.info("pg_partman maintenance procedure executed successfully.")
+        except Exception as e:
+            self.log.exception(f"Failed to execute pg_partman maintenance procedure: {e}")
