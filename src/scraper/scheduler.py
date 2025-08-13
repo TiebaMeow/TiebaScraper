@@ -137,10 +137,10 @@ class Scheduler:
             max_pages=max_pages,
             is_good=is_good,
         )
-        task = Task(priority=Priority.LOW, content=task_content)
+        task = Task(priority=Priority.BACKFILL, content=task_content)
         await self.queue.put(task)
         section = "GOOD" if is_good else "NORMAL"
         self.log.debug(
             f"Scheduled BACKFILL [{section}] start pn={start_pn} for [{forum.fname}吧] "
-            f"with priority=LOW (max_pages={max_pages})."
+            f"with priority=BACKFILL (max_pages={max_pages})."
         )

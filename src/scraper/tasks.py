@@ -13,15 +13,17 @@ from enum import IntEnum
 class Priority(IntEnum):
     """任务优先级，数值越小，优先级越高。
 
-    定义了三种优先级：
-    - HIGH: 首页实时扫描任务
-    - MEDIUM: 单主题贴回复的全量或增量扫描任务
-    - LOW: 历史数据回溯、楼中楼扫描和深度扫描任务
+    定义了四种优先级：
+    - HIGH: 首页实时扫描和回复增量扫描任务
+    - MEDIUM: 回复全量扫描和楼中楼增量扫描任务
+    - LOW: 楼中楼全量扫描和分区维护任务
+    - BACKFILL: 历史数据回溯任务
     """
 
     HIGH = 1  # ScanThreads, IncrementalScanPosts
     MEDIUM = 2  # FullScanPosts, IncrementalScanComments
-    LOW = 3  # FullScanComments, DeepScan
+    LOW = 3  # FullScanComments, PartmanMaintenanceTask
+    BACKFILL = 4  # BackfillTasks
 
 
 @dataclasses.dataclass(order=True, slots=True, frozen=True)

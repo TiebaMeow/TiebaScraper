@@ -134,7 +134,7 @@ class ThreadsTaskHandler(TaskHandler):
                     backfill=backfill,
                     max_pages=max_pages,
                 )
-                await self.queue.put(Task(priority=Priority.LOW, content=next_task_content))
+                await self.queue.put(Task(priority=Priority.BACKFILL, content=next_task_content))
                 self.log.info(f"[{fname}吧] Scheduled backfill ScanThreadsTask, pn={pn + 1}")
 
         except Exception as e:
@@ -163,7 +163,7 @@ class ThreadsTaskHandler(TaskHandler):
         await self.datastore.save_items(new_thread_models)
         self.log.debug(f"Saved {len(new_threads)} new threads to DB.")
 
-        priority = Priority.LOW if backfill else Priority.MEDIUM
+        priority = Priority.BACKFILL if backfill else Priority.MEDIUM
 
         for thread in new_threads:
             if not backfill:
@@ -196,6 +196,8 @@ class ThreadsTaskHandler(TaskHandler):
 
         thread_to_update = []
 
+        priority = Priority.BACKFILL if backfill else Priority.HIGH
+
         for thread_data in old_threads:
             stored_thread = stored_threads_map.get(thread_data.tid)
             if stored_thread and thread_data.last_time > stored_thread.last_time:
@@ -211,7 +213,7 @@ class ThreadsTaskHandler(TaskHandler):
                     last_floor=stored_thread.reply_num,
                     backfill=backfill,
                 )
-                await self.queue.put(Task(priority=Priority.HIGH, content=update_task_content))
+                await self.queue.put(Task(priority=priority, content=update_task_content))
                 self.log.info(
                     f"[{thread_data.fname}吧] Scheduled IncrementalScanPostsTask for updated tid={thread_data.tid}"
                 )
@@ -291,6 +293,8 @@ class FullScanPostsTaskHandler(TaskHandler):
         post_models = [PostModel.from_aiotieba(p) for p in posts_page]
         await self.datastore.save_items(post_models)
 
+        priority = Priority.BACKFILL if backfill else Priority.LOW
+
         for post in posts_page.objs:
             if not backfill:
                 await self.datastore.push_to_consumer_queue("post", post.pid)
@@ -303,7 +307,7 @@ class FullScanPostsTaskHandler(TaskHandler):
 
             if post.reply_num > 10 or len(post.comments) != post.reply_num:
                 comment_task = FullScanCommentsTask(tid=tid, pid=post.pid, backfill=backfill)
-                await self.queue.put(Task(priority=Priority.LOW, content=comment_task))
+                await self.queue.put(Task(priority=priority, content=comment_task))
                 self.log.info(f"[{post.fname}吧] Scheduled FullScanCommentsTask for pid={post.pid} in tid={tid}")
 
 
@@ -482,6 +486,8 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
         await self.datastore.save_items(new_post_models)
         self.log.debug(f"Saved {len(new_posts)} new posts to DB.")
 
+        priority = Priority.BACKFILL if backfill else Priority.LOW
+
         for post in new_posts:
             if not backfill:
                 await self.datastore.push_to_consumer_queue("post", post.pid)
@@ -489,7 +495,7 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
 
             if post.reply_num > 10 or len(post.comments) != post.reply_num:
                 comment_task = FullScanCommentsTask(tid=post.tid, pid=post.pid, backfill=backfill)
-                await self.queue.put(Task(priority=Priority.LOW, content=comment_task))
+                await self.queue.put(Task(priority=priority, content=comment_task))
                 self.log.info(
                     f"[{post.fname}吧] Scheduled FullScanCommentsTask for new pid={post.pid} in tid={post.tid}"
                 )
@@ -514,6 +520,8 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
 
         posts_to_update = []
 
+        priority = Priority.BACKFILL if backfill else Priority.MEDIUM
+
         for post_data in old_posts:
             stored_post = stored_posts_map.get(post_data.pid)
             if stored_post and post_data.reply_num > stored_post.reply_num:
@@ -528,7 +536,7 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
                     pid=post_data.pid,
                     backfill=backfill,
                 )
-                await self.queue.put(Task(priority=Priority.MEDIUM, content=update_task_content))
+                await self.queue.put(Task(priority=priority, content=update_task_content))
                 self.log.info(
                     f"[{post_data.fname}吧] Scheduled IncrementalScanCommentsTask for updated pid={post_data.pid}"
                 )
