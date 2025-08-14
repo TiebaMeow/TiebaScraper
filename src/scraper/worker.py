@@ -882,6 +882,9 @@ class Worker:
     async def _handle_partman_maintenance(self):
         """执行 pg_partman 维护过程。"""
         try:
+            if not self.container.config.partition_enabled:
+                self.log.debug("Partition disabled; skip pg_partman maintenance.")
+                return
             await self.datastore.run_partition_maintenance()
             self.log.info("pg_partman maintenance procedure executed successfully.")
         except Exception as e:

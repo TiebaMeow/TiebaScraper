@@ -103,15 +103,16 @@ async def create_tables(container: Container) -> None:
     try:
         async with container.db_engine.begin() as conn:  # type: ignore
             await conn.run_sync(Base.metadata.create_all)
-            await conn.execute(text("CREATE SCHEMA IF NOT EXISTS partman;"))
-            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_partman WITH SCHEMA partman;"))
-            for table in ("thread", "post", "comment"):
-                await _partman_create_parent(
-                    conn,
-                    f"public.{table}",
-                    interval=container.config.p_interval,
-                    premake=container.config.p_premake,
-                )
+            if container.config.partition_enabled:
+                await conn.execute(text("CREATE SCHEMA IF NOT EXISTS partman;"))
+                await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_partman WITH SCHEMA partman;"))
+                for table in ("thread", "post", "comment"):
+                    await _partman_create_parent(
+                        conn,
+                        f"public.{table}",
+                        interval=container.config.p_interval,
+                        premake=container.config.p_premake,
+                    )
 
     except Exception as e:
         log.error(f"Failed to create database tables: {e}")

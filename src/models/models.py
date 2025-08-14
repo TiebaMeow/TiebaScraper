@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import os
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 from zoneinfo import ZoneInfo
 
@@ -52,6 +54,44 @@ def now_with_tz():
         datetime: 上海时区的当前时间。
     """
     return datetime.now(SHANGHAI_TZ)
+
+
+def _partition_enabled() -> bool:
+    """从 config.toml 或环境变量读取是否启用分区，默认启用。"""
+
+    env_val = os.getenv("PARTITION_ENABLED")
+    if env_val is not None:
+        return str(env_val).strip().lower() in {"1", "true", "yes", "on"}
+
+    try:
+        root = Path(__file__).resolve().parents[2]
+        cfg = root / "config.toml"
+        if cfg.exists():
+            import tomllib
+
+            with cfg.open("rb") as f:
+                data = tomllib.load(f)
+            db = data.get("database") or {}
+            val = db.get("partition_enabled")
+            if isinstance(val, bool):
+                return val
+    except Exception:
+        pass
+
+    return True
+
+
+_PARTITION_ENABLED = _partition_enabled()
+
+
+def _with_partition(*indexes: Any):
+    """根据开关拼装 __table_args__。
+
+    当启用分区时附加 {"postgresql_partition_by": "RANGE (create_time)"}。
+    """
+    if _PARTITION_ENABLED:
+        return (*indexes, {"postgresql_partition_by": "RANGE (create_time)"})
+    return indexes
 
 
 class FragAtModel(BaseModel):
@@ -403,12 +443,11 @@ class Thread(MixinBase, AiotiebaConvertible):
     """
 
     __tablename__ = "thread"
-    __table_args__ = (
+    __table_args__ = _with_partition(
         Index("idx_thread_forum_ctime", "fid", "create_time"),
         Index("idx_thread_forum_ltime", "fid", "last_time"),
         Index("idx_thread_author_time", "author_id", "create_time"),
         Index("idx_thread_author_forum_time", "author_id", "fid", "create_time"),
-        {"postgresql_partition_by": "RANGE (create_time)"},
     )
 
     tid: Mapped[int] = mapped_column(BIGINT, primary_key=True)
@@ -485,10 +524,9 @@ class Post(MixinBase, AiotiebaConvertible):
     """
 
     __tablename__ = "post"
-    __table_args__ = (
+    __table_args__ = _with_partition(
         Index("idx_post_thread_time", "tid", "create_time"),
         Index("idx_post_author_time", "author_id", "create_time"),
-        {"postgresql_partition_by": "RANGE (create_time)"},
     )
 
     pid: Mapped[int] = mapped_column(BIGINT, primary_key=True)
@@ -561,10 +599,9 @@ class Comment(MixinBase, AiotiebaConvertible):
     """
 
     __tablename__ = "comment"
-    __table_args__ = (
+    __table_args__ = _with_partition(
         Index("idx_comment_post_time", "pid", "create_time"),
         Index("idx_comment_author_time", "author_id", "create_time"),
-        {"postgresql_partition_by": "RANGE (create_time)"},
     )
 
     cid: Mapped[int] = mapped_column(BIGINT, primary_key=True)

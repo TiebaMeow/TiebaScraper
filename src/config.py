@@ -28,6 +28,7 @@ class DatabaseConfig(BaseModel):
     username: str = "admin"
     password: str = "123456"
     db_name: str = "tieba_data"
+    partition_enabled: bool = False
     p_interval: str = "1 month"
     p_premake: int = 4
 
@@ -204,6 +205,10 @@ class Config:
     @property
     def p_premake(self) -> int:
         return self.pydantic_config.database.p_premake
+
+    @property
+    def partition_enabled(self) -> bool:
+        return self.pydantic_config.database.partition_enabled
 
     @property
     def redis_url(self) -> str:

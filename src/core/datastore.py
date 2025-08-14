@@ -311,6 +311,9 @@ class DataStore:
 
         为避免 partition_data_proc 的临时表字段冲突，每个表的回填使用独立连接。
         """
+        if not self.container.config.partition_enabled:
+            log.debug("Partition disabled; skip run_partition_maintenance().")
+            return
         start = perf_counter()
 
         try:

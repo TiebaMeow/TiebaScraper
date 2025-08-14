@@ -55,7 +55,7 @@ class Scheduler:
         forums = self.container.forums or []
         interval = self.container.config.scheduler_interval_seconds
         good_every = self.container.config.good_page_every_ticks
-        maint_enabled = self.container.config.maintenance_enabled
+        maint_enabled = self.container.config.maintenance_enabled and self.container.config.partition_enabled
         maint_every = self.container.config.maintenance_every_ticks
 
         if not forums:
@@ -101,6 +101,8 @@ class Scheduler:
 
     async def _schedule_partman_maintenance(self):
         """调度一次 pg_partman 分区维护任务。"""
+        if not self.container.config.partition_enabled:
+            return
         task = Task(priority=Priority.LOW, content=PartmanMaintenanceTask())
         await self.queue.put(task)
         self.log.debug("Scheduled PartmanMaintenanceTask with priority=LOW")

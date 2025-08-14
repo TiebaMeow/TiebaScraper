@@ -21,11 +21,12 @@ username = "admin"
 password = "123456"
 # 数据库名称
 db_name = "tieba_data"
+# 是否启用 PostgreSQL 分区（pg_partman），默认不启用
+partition_enabled = false
 # 分区间隔
 p_interval = "1 month"
 # 分区预创建数量
 p_premake = 4
-# 请根据你的数据量合理设置 p_interval 和 p_premake 的值，以确保单个分区不会太大，以及默认分区不会有太多数据。
 
 # Redis 连接信息
 [redis]
