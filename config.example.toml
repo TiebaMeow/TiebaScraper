@@ -1,34 +1,53 @@
 [tieba]
 BDUSS = "your_bduss_here"
+# 要监控的贴吧列表，末尾不用带“吧”字
 forums = [
   "forum_a",
   "forum_b",
   "forum_c"
 ]
+# 历史回溯模式最大页数
 max_backfill_pages = 100
 
+# PostgreSQL 数据库连接信息和分区配置
 [database]
+# 数据库主机地址
 host = "localhost"
+# 数据库端口（一般保持默认）
 port = 5432
+# 数据库用户名
 username = "admin"
+# 数据库密码
 password = "123456"
+# 数据库名称
 db_name = "tieba_data"
 # 分区间隔
 p_interval = "1 month"
 # 分区预创建数量
 p_premake = 4
+# 请根据你的数据量合理设置 p_interval 和 p_premake 的值，以确保单个分区不会太大，以及默认分区不会有太多数据。
 
+# Redis 连接信息
 [redis]
+# Redis 主机地址
 host = "localhost"
+# Redis 端口（一般保持默认）
 port = 6379
+# Redis 用户名（可留空）
 username = ""
+# Redis 密码（可留空）
 password = ""
+# Redis 数据库编号（一般为 0）
 db = 0
 
+# 限流配置
 [rate_limit]
+# 每秒请求数
 rps = 10
+# 并发数
 concurrency = 4
 
+# 调度器配置
 [scheduler]
 # 以下配置项仅 periodic/hybrid 模式生效
 # 调度周期，即每 N 秒投递一次首页任务
@@ -39,3 +58,40 @@ good_page_every_n_ticks = 10
 maintenance_every_n_ticks = 10
 # 是否启用分区维护任务
 maintenance_enabled = true
+
+# 消费者配置
+[consumer]
+# 向 Redis 推送的模式，可选"id", "object"或"none"
+# id 为仅推送内容类型与 tid/pid
+# object 为推送完整序列化后的 aiotieba 对象
+# none 为不推送
+mode = "id"
+
+# id 模式配置
+[consumer.id]
+# 以下配置项仅 id 模式生效
+# id 队列的 Redis 键
+queue_key = "consumer:queue"
+# id 队列的最大长度
+max_len = 10000
+
+# object 模式配置
+[consumer.object]
+# 以下配置项仅 object 模式生效
+# stream 前缀
+prefix = "events"
+# stream 最大长度
+max_len = 10000
+# 近似长度，允许稍微超过最大长度以保证性能
+approx = true
+# 是否启用 JSON 压缩
+json_compact = true
+
+# 推送重试配置
+[consumer.publish]
+# 超时时间（毫秒）
+timeout_ms = 2000
+# 最大重试次数
+max_retries = 5
+# 重试间隔（毫秒）
+retry_backoff_ms = 200

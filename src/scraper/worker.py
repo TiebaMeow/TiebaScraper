@@ -168,7 +168,8 @@ class ThreadsTaskHandler(TaskHandler):
         for thread in new_threads:
             if not backfill:
                 await self.datastore.push_to_consumer_queue("thread", thread.tid)
-                self.log.debug(f"Pushed new thread tid={thread.tid} to consumer queue.")
+                await self.datastore.push_object_event("thread", thread)
+                self.log.debug(f"Pushed new thread tid={thread.tid} to consumer queue or object stream.")
 
             new_task_content = FullScanPostsTask(tid=thread.tid, backfill=backfill)
             await self.queue.put(Task(priority=priority, content=new_task_content))
@@ -298,7 +299,8 @@ class FullScanPostsTaskHandler(TaskHandler):
         for post in posts_page.objs:
             if not backfill:
                 await self.datastore.push_to_consumer_queue("post", post.pid)
-                self.log.debug(f"Pushed post pid={post.pid} to consumer queue.")
+                await self.datastore.push_object_event("post", post)
+                self.log.debug(f"Pushed post pid={post.pid} to consumer queue or object stream.")
 
             await self.ensure_users(post.comments)
 
@@ -491,7 +493,8 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
         for post in new_posts:
             if not backfill:
                 await self.datastore.push_to_consumer_queue("post", post.pid)
-                self.log.debug(f"Pushed new post pid={post.pid} to consumer queue.")
+                await self.datastore.push_object_event("post", post)
+                self.log.debug(f"Pushed new post pid={post.pid} to consumer queue or object stream.")
 
             if post.reply_num > 10 or len(post.comments) != post.reply_num:
                 comment_task = FullScanCommentsTask(tid=post.tid, pid=post.pid, backfill=backfill)
@@ -673,7 +676,8 @@ class FullScanCommentsTaskHandler(TaskHandler):
         for comment in new_comments_data:
             if not backfill:
                 await self.datastore.push_to_consumer_queue("comment", comment.pid)
-                self.log.debug(f"Pushed comment pid={comment.pid} to consumer queue.")
+                await self.datastore.push_object_event("comment", comment)
+                self.log.debug(f"Pushed comment pid={comment.pid} to consumer queue or object stream.")
 
 
 class IncrementalScanCommentsTaskHandler(TaskHandler):
@@ -778,6 +782,7 @@ class IncrementalScanCommentsTaskHandler(TaskHandler):
         for comment in new_comments_data:
             if not backfill:
                 await self.datastore.push_to_consumer_queue("comment", comment.pid)
+                await self.datastore.push_object_event("comment", comment)
                 self.log.debug(f"Pushed comment pid={comment.pid} to consumer queue.")
 
         if old_cids:

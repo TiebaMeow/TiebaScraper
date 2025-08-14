@@ -66,6 +66,41 @@ class SchedulerConfig(BaseModel):
     maintenance_enabled: bool = True
 
 
+class ConsumerIdConfig(BaseModel):
+    """id 模式配置"""
+
+    queue_key: str = "consumer:queue"
+    max_len: int = Field(10000, gt=0)
+
+
+class ConsumerObjectConfig(BaseModel):
+    """object 模式配置"""
+
+    prefix: str = "events"
+    max_len: int = Field(10000, gt=0)
+    approx: bool = True
+    json_compact: bool = True
+
+
+class ConsumerPublishConfig(BaseModel):
+    """发布通用配置（重试/超时）"""
+
+    timeout_ms: int = Field(2000, gt=0)
+    max_retries: int = Field(5, gt=0)
+    retry_backoff_ms: int = Field(200, gt=0)
+
+
+class ConsumerConfig(BaseModel):
+    """消费者推送配置"""
+
+    mode: Literal["id", "object", "none"] = "id"
+    id_: ConsumerIdConfig = Field(default_factory=lambda: ConsumerIdConfig(max_len=10000))
+    object: ConsumerObjectConfig = Field(default_factory=lambda: ConsumerObjectConfig(max_len=10000))
+    publish: ConsumerPublishConfig = Field(
+        default_factory=lambda: ConsumerPublishConfig(timeout_ms=2000, max_retries=5, retry_backoff_ms=200)
+    )
+
+
 class PydanticConfig(BaseModel):
     """Pydantic总配置模型"""
 
@@ -78,6 +113,7 @@ class PydanticConfig(BaseModel):
             interval_seconds=60, good_page_every_n_ticks=10, maintenance_every_n_ticks=10
         )
     )
+    consumer: ConsumerConfig = Field(default_factory=ConsumerConfig)
 
     @computed_field
     @property
@@ -209,18 +245,38 @@ class Config:
     def maintenance_enabled(self) -> bool:
         return self.pydantic_config.scheduler.maintenance_enabled
 
-    def __repr__(self) -> str:
-        """返回配置对象的字符串表示。
+    @property
+    def consumer_mode(self) -> Literal["id", "object", "none"]:
+        return self.pydantic_config.consumer.mode
 
-        Returns:
-            str: 包含主要配置项的字符串表示。
-        """
-        return (
-            f"Config(database_url={self.database_url}, p_interval={self.p_interval}, p_premake={self.p_premake}, "
-            f"redis_url={self.redis_url}, "
-            f"BDUSS={self.BDUSS}, forums={self.forums}, "
-            f"rps_limit={self.rps_limit}, concurrency_limit={self.concurrency_limit}, "
-            f"scheduler_interval_seconds={self.scheduler_interval_seconds}, "
-            f"maintenance_enabled={self.maintenance_enabled}, maintenance_every_ticks={self.maintenance_every_ticks}, "
-            f"good_page_every_ticks={self.good_page_every_ticks}, mode={self.mode})"
-        )
+    @property
+    def consumer_id_queue_key(self) -> str:
+        return self.pydantic_config.consumer.id_.queue_key
+
+    @property
+    def consumer_id_maxlen(self) -> int:
+        return self.pydantic_config.consumer.id_.max_len
+
+    @property
+    def consumer_object_maxlen(self) -> int:
+        return self.pydantic_config.consumer.object.max_len
+
+    @property
+    def consumer_object_approx(self) -> bool:
+        return self.pydantic_config.consumer.object.approx
+
+    @property
+    def consumer_json_compact(self) -> bool:
+        return self.pydantic_config.consumer.object.json_compact
+
+    @property
+    def consumer_publish_timeout_ms(self) -> int:
+        return self.pydantic_config.consumer.publish.timeout_ms
+
+    @property
+    def consumer_publish_max_retries(self) -> int:
+        return self.pydantic_config.consumer.publish.max_retries
+
+    @property
+    def consumer_publish_retry_backoff_ms(self) -> int:
+        return self.pydantic_config.consumer.publish.retry_backoff_ms

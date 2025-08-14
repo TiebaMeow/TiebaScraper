@@ -6,6 +6,7 @@
 """
 
 from .models import (
+    AiotiebaConvertible,
     Base,
     Comment,
     Forum,

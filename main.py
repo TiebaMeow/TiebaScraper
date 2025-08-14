@@ -15,7 +15,7 @@ from typing import Literal
 
 from src.core import initialize_application
 from src.scraper import Scheduler, Worker
-from src.utils.logging import setup_logging
+from src.utils import setup_logging
 
 # 统一日志配置（可用环境变量 LOG_LEVEL 覆盖级别）
 setup_logging()

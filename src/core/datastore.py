@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from time import perf_counter
 from typing import Literal, TypeVar
 
+import aiotieba.typing as aiotieba
 from cashews import Cache, add_prefix
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
@@ -16,9 +17,11 @@ from sqlalchemy.exc import IntegrityError
 
 from ..models import Comment, Forum, Post, Thread, User
 from .container import Container
+from .publisher import EventEnvelope, NoopPublisher, RedisStreamsPublisher, build_envelope
 
 ModelType = TypeVar("ModelType", Comment, Forum, Post, Thread, User)
 ItemType = Literal["thread", "post", "comment"]
+T_Aiotieba = aiotieba.Thread | aiotieba.Post | aiotieba.Comment
 
 log = logging.getLogger("datastore")
 
@@ -65,6 +68,22 @@ class DataStore:
             middlewares=(add_prefix("processed:"),),
             client_side=True,
         )
+
+        self.consumer_mode = self.container.config.consumer_mode
+
+        if self.consumer_mode in ("object", "id"):
+            self.publisher = RedisStreamsPublisher(
+                self.redis,  # type: ignore
+                maxlen=self.container.config.consumer_object_maxlen,
+                approx=self.container.config.consumer_object_approx,
+                json_compact=self.container.config.consumer_json_compact,
+                timeout_ms=self.container.config.consumer_publish_timeout_ms,
+                max_retries=self.container.config.consumer_publish_max_retries,
+                retry_backoff_ms=self.container.config.consumer_publish_retry_backoff_ms,
+                id_queue_key=CONSUMER_QUEUE_KEY,
+            )
+        else:
+            self.publisher = NoopPublisher()
 
     @asynccontextmanager
     async def get_session(self):
@@ -264,8 +283,28 @@ class DataStore:
             item_type: 数据项类型，可选值为'thread'、'post'或'comment'。
             item_id: 数据项的ID。
         """
-        message = f'{{"type": "{item_type}", "id": {item_id}}}'
-        await self.redis.lpush(CONSUMER_QUEUE_KEY, message)  # type: ignore
+        if self.consumer_mode != "id":
+            return
+
+        await self.publisher.publish_id(item_type, item_id)
+
+    async def push_object_event(
+        self,
+        item_type: ItemType,
+        obj: T_Aiotieba,
+        *,
+        backfill: bool = False,
+        event_type: str = "upsert",
+    ) -> None:
+        """将完整对象以事件形式推送到对象消费者（Redis Streams）。
+
+        在 config.mode != 'object' 时为 no-op。
+        """
+        if self.consumer_mode != "object":
+            return
+
+        envelope: EventEnvelope = build_envelope(item_type, obj, event_type=event_type, backfill=backfill)
+        await self.publisher.publish_object(item_type, envelope)
 
     async def run_partition_maintenance(self) -> None:
         """执行 pg_partman 的默认分区数据回填与维护过程。

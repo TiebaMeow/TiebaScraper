@@ -81,24 +81,7 @@ uv sync --extra speedup
     cp config.example.toml config.toml
     ```
 
-2. 编辑 `config.toml` 文件，填入以下信息：
-
-- `forums`: 要监控的贴吧列表，末尾不用带“吧”字
-- `database`: PostgreSQL 数据库连接信息和分区配置
-  - `host`: 数据库主机地址
-  - `port`: 数据库端口（一般保持默认）
-  - `username`: 数据库用户名
-  - `password`: 数据库密码
-  - `db_name`: 数据库名称
-  - `p_interval`: 分区间隔
-  - `p_premake`: 分区预创建数量
-- `redis`: Redis 缓存服务器信息
-  - `host`: Redis 主机地址
-  - `port`: Redis 端口（一般保持默认）
-  - `username`: Redis 用户名，没有可以留空为 `""`
-  - `password`: Redis 密码，没有可以留空为 `""`
-
-请根据你的数据量合理设置 `p_interval` 和 `p_premake` 的值，以确保单个分区不会太大，以及默认分区不会有太多数据。
+2. 编辑 `config.toml` 文件，根据注释填写相应的配置项
 
 ## 使用方法
 
@@ -125,6 +108,7 @@ uv run python main.py --mode backfill
 ```sql
 CALL partman.partition_data_proc('public.{table}');
 CALL partman.run_maintenance_proc();
+VACUUM ANALYZE public.{table};
 ```
 
 将 `{table}` 替换为 `thread`, `post`, `comment` 分别执行。
