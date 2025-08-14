@@ -1,5 +1,4 @@
 [tieba]
-BDUSS = "your_bduss_here"
 # 要监控的贴吧列表，末尾不用带“吧”字
 forums = [
   "forum_a",
@@ -55,9 +54,9 @@ concurrency = 4
 interval_seconds = 60
 # 每 N 个周期投递一次精华贴首页任务
 good_page_every_n_ticks = 10
-# 每 N 个周期投递一次分区维护任务
+# 每 N 个周期投递一次分区维护任务（仅开启分区时生效）
 maintenance_every_n_ticks = 10
-# 是否启用分区维护任务
+# 是否启用分区维护任务（仅开启分区时生效）
 maintenance_enabled = true
 
 # 消费者配置

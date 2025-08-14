@@ -46,7 +46,6 @@ class RedisConfig(BaseModel):
 class TiebaConfig(BaseModel):
     """贴吧相关配置模型"""
 
-    BDUSS: str = Field(...)
     forums: list[str] = Field(..., min_length=1)
     max_backfill_pages: int = Field(100, gt=0)
 
@@ -213,10 +212,6 @@ class Config:
     @property
     def redis_url(self) -> str:
         return str(self.pydantic_config.redis_url)
-
-    @property
-    def BDUSS(self) -> str:  # noqa: N802
-        return self.pydantic_config.tieba.BDUSS
 
     @property
     def forums(self) -> list[str]:
