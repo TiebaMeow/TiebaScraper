@@ -72,7 +72,7 @@ class Container:
         """
         log.info("Initializing container resources...")
         try:
-            self.limiter = AsyncLimiter(self.config.rps_limit, time_period=1.0)
+            self.limiter = AsyncLimiter(1, time_period=1 / self.config.rps_limit)
             self.semaphore = Semaphore(self.config.concurrency_limit)
             log.info(f"AioLimiter initialized with a rate of {self.config.rps_limit} RPS.")
 
