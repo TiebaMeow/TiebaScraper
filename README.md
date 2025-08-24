@@ -24,11 +24,10 @@ _基于 aiotieba 的高性能百度贴吧异步爬虫工具，支持实时监控
 - （可选）[pg_partman](https://github.com/pgpartman/pg_partman) 5.2.4
 - [Redis](https://redis.io/) 6.0+
 
-
 ## 安装依赖
 
 ```shell
-uv sync --extra speedup
+uv sync
 ```
 
 `uv` 会自动下载合适的 Python 版本并安装所有依赖。对于 Linux 系统，将自动同时安装并在运行时尝试使用 `uvloop`。
