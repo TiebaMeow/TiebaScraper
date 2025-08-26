@@ -11,30 +11,20 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, field_validator
 from sqlalchemy import BIGINT, DateTime, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import DeclarativeBase, Mapped, foreign, mapped_column, relationship
+
+from ..schemas import FRAG_MAP, Fragment, FragUnknownModel
 
 if TYPE_CHECKING:
     import aiotieba.api.get_posts._classdef as aiotieba_posts
     import aiotieba.typing as aiotieba
 
     T_Aiotieba = aiotieba.Thread | aiotieba.Post | aiotieba.Comment
-
-log = logging.getLogger("models")
-
-T_AiotiebaConvertible = TypeVar("T_AiotiebaConvertible", bound="AiotiebaConvertible")
-
-
-class Base(DeclarativeBase):
-    pass
-
-
-SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 
 
 __all__ = [
@@ -45,6 +35,16 @@ __all__ = [
     "Comment",
     "Fragment",
 ]
+
+
+log = logging.getLogger("models")
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 
 
 def now_with_tz():
@@ -94,171 +94,6 @@ def _with_partition(*indexes: Any):
     return indexes
 
 
-class FragAtModel(BaseModel):
-    """@碎片模型。
-
-    Attributes:
-        type: 片段类型，固定为'at'
-        text (str): 被@用户的昵称 含@
-        user_id (int): 被@用户的user_id
-    """
-
-    type: Literal["at"] = "at"
-    text: str = ""
-    user_id: int = 0
-
-
-class FragEmojiModel(BaseModel):
-    """表情碎片模型。
-
-    Attributes:
-        type: 片段类型，固定为'emoji'
-        id (str): 表情图片id
-        desc (str): 表情描述
-    """
-
-    type: Literal["emoji"] = "emoji"
-    id: str = ""
-    desc: str = ""
-
-
-class FragImageModel(BaseModel):
-    """图像碎片模型。
-
-    Attributes:
-        type: 片段类型，固定为'image'
-        src (str): 小图链接 宽720px
-        big_src (str): 大图链接 宽960px
-        origin_src (str): 原图链接
-        origin_size (int): 原图大小（字节）
-        show_width (int): 图像在客户端预览显示的宽度（像素）
-        show_height (int): 图像在客户端预览显示的高度（像素）
-        hash (str): 百度图床hash
-    """
-
-    type: Literal["image"] = "image"
-    src: str = ""
-    big_src: str = ""
-    origin_src: str = ""
-    origin_size: int = 0
-    show_width: int = 0
-    show_height: int = 0
-    hash: str = ""
-
-
-class FragItemModel(BaseModel):
-    """item碎片模型。
-
-    Attributes:
-        type: 片段类型，固定为'item'
-        text (str): item名称
-    """
-
-    type: Literal["item"] = "item"
-    text: str = ""
-
-
-class FragLinkModel(BaseModel):
-    """链接碎片模型。
-
-    Attributes:
-        type: 片段类型，固定为'link'
-        text (str): 原链接
-        title (str): 链接标题
-        raw_url (str): 解析后的原链接
-    """
-
-    type: Literal["link"] = "link"
-    text: str = ""
-    title: str = ""
-    raw_url: str = ""
-
-    @field_validator("raw_url", mode="before")
-    @classmethod
-    def _coerce_raw_url(cls, v):
-        return "" if v is None else str(v)
-
-
-class FragTextModel(BaseModel):
-    """纯文本碎片模型。
-
-    Attributes:
-        type: 片段类型，固定为'text'
-        text (str): 文本内容
-    """
-
-    type: Literal["text"] = "text"
-    text: str = ""
-
-
-class FragTiebaPlusModel(BaseModel):
-    """贴吧plus广告碎片模型。
-
-    Attributes:
-        type: 片段类型，固定为'tieba_plus'
-        text (str): 贴吧plus广告描述
-        url (str): 解析后的贴吧plus广告跳转链接
-    """
-
-    type: Literal["tieba_plus"] = "tieba_plus"
-    text: str = ""
-    url: str = ""
-
-    @field_validator("url", mode="before")
-    @classmethod
-    def _coerce_url(cls, v):
-        return "" if v is None else str(v)
-
-
-class FragVideoModel(BaseModel):
-    """视频碎片模型。
-
-    Attributes:
-        type: 片段类型，固定为'video'
-        src (str): 视频链接
-        cover_src (str): 封面链接
-        duration (int): 视频长度（秒）
-        width (int): 视频宽度（像素）
-        height (int): 视频高度（像素）
-        view_num (int): 浏览次数
-    """
-
-    type: Literal["video"] = "video"
-    src: str = ""
-    cover_src: str = ""
-    duration: int = 0
-    width: int = 0
-    height: int = 0
-    view_num: int = 0
-
-
-class FragVoiceModel(BaseModel):
-    """音频碎片模型。
-
-    Attributes:
-        type: 片段类型，固定为'voice'
-        md5 (str): 音频md5
-        duration (int): 音频长度（秒）
-    """
-
-    type: Literal["voice"] = "voice"
-    md5: str = ""
-    duration: int = 0
-
-
-Fragment = (
-    FragAtModel
-    | FragEmojiModel
-    | FragImageModel
-    | FragItemModel
-    | FragLinkModel
-    | FragTextModel
-    | FragTiebaPlusModel
-    | FragVideoModel
-    | FragVoiceModel
-)
-
-
 class MixinBase(Base):
     """为SQLAlchemy模型提供通用方法的混入类。"""
 
@@ -282,13 +117,13 @@ class MixinBase(Base):
         return result
 
 
-class AiotiebaConvertible:
+class AiotiebaConvertible[T]:
     """
     为可以从aiotieba对象转换的模型定义一个通用接口的抽象基类。
     """
 
     @classmethod
-    def from_aiotieba(cls: type[T_AiotiebaConvertible], obj: T_Aiotieba) -> T_AiotiebaConvertible:
+    def from_aiotieba(cls: T, obj: T_Aiotieba) -> T:
         """
         从aiotieba库返回的对象创建模型实例的抽象方法。
 
@@ -315,17 +150,16 @@ class AiotiebaConvertible:
             models.Fragment: 转换后的Pydantic模型实例。
         """
         source_type_name = type(obj).__name__
-        base_type_name = source_type_name.rsplit("_", 1)[0]
-        target_model_name = f"{base_type_name}Model"
+        target_model_name = source_type_name.rsplit("_", 1)[0]
 
-        target_model = globals().get(target_model_name)
+        target_model = FRAG_MAP.get(target_model_name)
 
         if target_model is None:
             log.warning(
-                f"Unsupported fragment base type: '{base_type_name}' (from '{source_type_name}'), "
-                f"using FragTextModel as default type."
+                f"Unsupported fragment base type: '{target_model_name}' (from '{source_type_name}'), "
+                f"using FragUnknownModel as default type."
             )
-            return FragTextModel(text=str(obj))
+            return FragUnknownModel()
 
         data_dict = dataclasses.asdict(obj)
         return target_model(**data_dict)
