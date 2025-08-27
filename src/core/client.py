@@ -7,6 +7,7 @@ from typing import Any
 
 import aiotieba as tb
 from aiolimiter import AsyncLimiter
+from aiotieba.exception import HTTPStatusError, TiebaServerError
 from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt
 from tenacity.wait import wait_exponential_jitter
 
@@ -87,8 +88,14 @@ class Client(tb.Client):
                 async with self.rate_limiter():
                     async for attempt in AsyncRetrying(
                         stop=stop_after_attempt(3),
-                        wait=wait_exponential_jitter(initial=0.2, max=2.0),
-                        retry=retry_if_exception_type((asyncio.TimeoutError, ConnectionError, OSError)),
+                        wait=wait_exponential_jitter(initial=0.5, max=3.0),
+                        retry=retry_if_exception_type((
+                            asyncio.TimeoutError,
+                            ConnectionError,
+                            OSError,
+                            HTTPStatusError,
+                            TiebaServerError,
+                        )),
                         reraise=True,
                     ):
                         with attempt:
