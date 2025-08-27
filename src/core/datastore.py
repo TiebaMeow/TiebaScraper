@@ -272,8 +272,8 @@ class DataStore:
             result = await session.execute(statement)
             return list(result.scalars().all())
 
-    async def push_to_consumer_queue(self, item_type: ItemType, item_id: int):
-        """将新处理的数据信息推送到Consumer队列。
+    async def push_to_id_queue(self, item_type: ItemType, item_id: int):
+        """将新处理的数据信息推送到ID队列。
 
         将处理完成的数据项信息以JSON格式推送到Redis列表，
         供下游消费者服务处理。
@@ -303,7 +303,7 @@ class DataStore:
             return
 
         envelope: EventEnvelope = build_envelope(item_type, obj, event_type=event_type, backfill=backfill)
-        await self.publisher.publish_object(item_type, envelope)
+        await self.publisher.publish_object(envelope)
 
     async def run_partition_maintenance(self) -> None:
         """执行 pg_partman 的默认分区数据回填与维护过程。

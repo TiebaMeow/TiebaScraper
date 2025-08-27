@@ -42,9 +42,9 @@ db = 0
 
 # 限流配置
 [rate_limit]
-# 每秒请求数
+# 每秒请求数限制
 rps = 10
-# 并发数
+# 并发数限制
 concurrency = 4
 
 # 调度器配置
@@ -71,15 +71,15 @@ mode = "id"
 [consumer.id]
 # 以下配置项仅 id 模式生效
 # id 队列的 Redis 键
-queue_key = "consumer:queue"
+queue_key = "scraper:tieba:queue"
 # id 队列的最大长度
 max_len = 10000
 
 # object 模式配置
 [consumer.object]
 # 以下配置项仅 object 模式生效
-# stream 前缀
-prefix = "events"
+# stream 键
+stream_key = "scraper:tieba:events"
 # stream 最大长度
 max_len = 10000
 # 近似长度，允许稍微超过最大长度以保证性能

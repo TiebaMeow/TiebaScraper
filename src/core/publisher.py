@@ -46,8 +46,9 @@ def _now_ms() -> int:
 class EventEnvelope:
     schema: str
     type: str
-    id: int
-    ts: int
+    object_type: str
+    object_id: int
+    time: int
     source: str
     backfill: bool
     payload: dict[str, Any]
@@ -66,7 +67,7 @@ class Publisher:
     async def publish_id(self, item_type: ItemType, item_id: int) -> None:
         raise NotImplementedError
 
-    async def publish_object(self, item_type: ItemType, envelope: EventEnvelope) -> None:
+    async def publish_object(self, envelope: EventEnvelope) -> None:
         raise NotImplementedError
 
 
@@ -74,7 +75,7 @@ class NoopPublisher(Publisher):
     async def publish_id(self, item_type: ItemType, item_id: int) -> None:
         return
 
-    async def publish_object(self, item_type: ItemType, envelope: EventEnvelope) -> None:
+    async def publish_object(self, envelope: EventEnvelope) -> None:
         return
 
 
@@ -85,17 +86,17 @@ class RedisStreamsPublisher(Publisher):
         self,
         redis_client: redis.Redis,
         *,
-        stream_prefix: str = "events",
+        stream_key: str = "scraper:tieba:events",
         maxlen: int = 10000,
         approx: bool = True,
         json_compact: bool = True,
         timeout_ms: int = 2000,
         max_retries: int = 5,
         retry_backoff_ms: int = 200,
-        id_queue_key: str = "consumer:queue",
+        id_queue_key: str = "scraper:tieba:queue",
     ) -> None:
         self.redis = redis_client
-        self.stream_prefix = stream_prefix
+        self.stream_key = stream_key
         self.maxlen = maxlen
         self.approx = approx
         self.json_compact = json_compact
@@ -140,8 +141,8 @@ class RedisStreamsPublisher(Publisher):
             fail_log_msg=f"Failed to enqueue to list={self.id_queue_key}",
         )
 
-    async def publish_object(self, item_type: ItemType, envelope: EventEnvelope) -> None:
-        stream = f"{self.stream_prefix}:{item_type}"
+    async def publish_object(self, envelope: EventEnvelope) -> None:
+        stream = self.stream_key
         data = envelope.to_json_bytes(self.json_compact)
 
         entry = {"data": data}
@@ -173,9 +174,10 @@ def build_envelope(
 
     return EventEnvelope(
         schema=schema,
-        type=f"{item_type}.{event_type}",
-        id=eid,
-        ts=_now_ms(),
+        type=f"{event_type}",
+        object_type=item_type,
+        object_id=eid,
+        time=_now_ms(),
         source="scraper",
         backfill=backfill,
         payload=payload,

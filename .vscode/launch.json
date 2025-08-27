@@ -6,6 +6,7 @@
       "type": "debugpy",
       "request": "launch",
       "program": "${file}",
+      "cwd": "${workspaceFolder}/examples",
       "console": "integratedTerminal"
     },
     {
