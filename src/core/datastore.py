@@ -7,7 +7,7 @@
 import logging
 from contextlib import asynccontextmanager
 from time import perf_counter
-from typing import Literal, TypeVar
+from typing import Literal
 
 import aiotieba.typing as aiotieba
 from cashews import Cache, add_prefix
@@ -19,9 +19,8 @@ from ..models import Comment, Forum, Post, Thread, User
 from .container import Container
 from .publisher import EventEnvelope, NoopPublisher, RedisStreamsPublisher, build_envelope
 
-ModelType = TypeVar("ModelType", Comment, Forum, Post, Thread, User)
 ItemType = Literal["thread", "post", "comment"]
-T_Aiotieba = aiotieba.Thread | aiotieba.Post | aiotieba.Comment
+AiotiebaType = aiotieba.Thread | aiotieba.Post | aiotieba.Comment
 
 log = logging.getLogger("datastore")
 
@@ -200,7 +199,7 @@ class DataStore:
 
         log.debug(f"Marked {len(new_ids)} new {item_type} IDs as processed")
 
-    async def save_items(self, items: list[ModelType], upsert: bool = False):
+    async def save_items[T: (Comment, Forum, Post, Thread, User)](self, items: list[T], upsert: bool = False):
         """将SQLAlchemy对象批量保存到数据库。
 
         使用PostgreSQL的 "INSERT ... ON CONFLICT DO NOTHING"
@@ -291,7 +290,7 @@ class DataStore:
     async def push_object_event(
         self,
         item_type: ItemType,
-        obj: T_Aiotieba,
+        obj: AiotiebaType,
         *,
         backfill: bool = False,
         event_type: str = "upsert",

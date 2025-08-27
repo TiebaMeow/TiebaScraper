@@ -11,7 +11,7 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import BIGINT, DateTime, Index, Integer, String, Text
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     import aiotieba.api.get_posts._classdef as aiotieba_posts
     import aiotieba.typing as aiotieba
 
-    T_Aiotieba = aiotieba.Thread | aiotieba.Post | aiotieba.Comment
+    AiotiebaType = aiotieba.Thread | aiotieba.Post | aiotieba.Comment
 
 
 __all__ = [
@@ -117,13 +117,13 @@ class MixinBase(Base):
         return result
 
 
-class AiotiebaConvertible[T]:
+class AiotiebaConvertible:
     """
     为可以从aiotieba对象转换的模型定义一个通用接口的抽象基类。
     """
 
     @classmethod
-    def from_aiotieba(cls: T, obj: T_Aiotieba) -> T:
+    def from_aiotieba(cls: type[Self], obj: AiotiebaType) -> Self:
         """
         从aiotieba库返回的对象创建模型实例的抽象方法。
 
@@ -136,7 +136,7 @@ class AiotiebaConvertible[T]:
         raise NotImplementedError
 
     @staticmethod
-    def _convert_fragment(obj: T_Aiotieba) -> Fragment:
+    def _convert_fragment(obj: AiotiebaType) -> Fragment:
         """将单个爬取到的fragment对象转换为其对应的Pydantic模型实例。
 
         此方法会自动处理_t, _p, _c等后缀，

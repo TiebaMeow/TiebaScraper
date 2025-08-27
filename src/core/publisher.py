@@ -17,18 +17,18 @@ from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt,
 
 from ..utils import to_jsonable
 
+try:
+    import orjson as _orjson
+except Exception:
+    _orjson = None
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     import aiotieba.typing as aiotieba
     import redis.asyncio as redis
 
-    T_Aiotieba = aiotieba.Thread | aiotieba.Post | aiotieba.Comment
-
-try:
-    import orjson as _orjson
-except Exception:
-    _orjson = None
+    AiotiebaType = aiotieba.Thread | aiotieba.Post | aiotieba.Comment
 
 
 log = logging.getLogger("publisher")
@@ -159,7 +159,7 @@ class RedisStreamsPublisher(Publisher):
 
 def build_envelope(
     item_type: ItemType,
-    obj: T_Aiotieba,
+    obj: AiotiebaType,
     *,
     event_type: str = "upsert",
     backfill: bool = False,
