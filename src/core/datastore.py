@@ -73,13 +73,14 @@ class DataStore:
         if self.consumer_mode in ("object", "id"):
             self.publisher = RedisStreamsPublisher(
                 self.redis,  # type: ignore
+                stream_prefix=self.container.config.consumer_object_prefix,
                 maxlen=self.container.config.consumer_object_maxlen,
                 approx=self.container.config.consumer_object_approx,
                 json_compact=self.container.config.consumer_json_compact,
                 timeout_ms=self.container.config.consumer_publish_timeout_ms,
                 max_retries=self.container.config.consumer_publish_max_retries,
                 retry_backoff_ms=self.container.config.consumer_publish_retry_backoff_ms,
-                id_queue_key=CONSUMER_QUEUE_KEY,
+                id_queue_key=self.container.config.consumer_id_queue_key,
             )
         else:
             self.publisher = NoopPublisher()

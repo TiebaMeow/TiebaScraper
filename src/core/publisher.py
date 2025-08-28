@@ -47,6 +47,7 @@ class EventEnvelope:
     schema: str
     type: str
     object_type: str
+    fid: int
     object_id: int
     time: int
     source: str
@@ -86,7 +87,7 @@ class RedisStreamsPublisher(Publisher):
         self,
         redis_client: redis.Redis,
         *,
-        stream_key: str = "scraper:tieba:events",
+        stream_prefix: str = "scraper:tieba:events",
         maxlen: int = 10000,
         approx: bool = True,
         json_compact: bool = True,
@@ -96,7 +97,7 @@ class RedisStreamsPublisher(Publisher):
         id_queue_key: str = "scraper:tieba:queue",
     ) -> None:
         self.redis = redis_client
-        self.stream_key = stream_key
+        self.stream_prefix = stream_prefix
         self.maxlen = maxlen
         self.approx = approx
         self.json_compact = json_compact
@@ -142,7 +143,7 @@ class RedisStreamsPublisher(Publisher):
         )
 
     async def publish_object(self, envelope: EventEnvelope) -> None:
-        stream = self.stream_key
+        stream = f"{self.stream_prefix}:{envelope.fid}:{envelope.object_type}"
         data = envelope.to_json_bytes(self.json_compact)
 
         entry = {"data": data}
@@ -174,8 +175,9 @@ def build_envelope(
 
     return EventEnvelope(
         schema=schema,
-        type=f"{event_type}",
+        type=event_type,
         object_type=item_type,
+        fid=obj.fid,
         object_id=eid,
         time=_now_ms(),
         source="scraper",

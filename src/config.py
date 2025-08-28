@@ -69,14 +69,14 @@ class SchedulerConfig(BaseModel):
 class ConsumerIdConfig(BaseModel):
     """id 模式配置"""
 
-    queue_key: str = "consumer:queue"
+    queue_key: str = "scraper:tieba:queue"
     max_len: int = Field(10000, gt=0)
 
 
 class ConsumerObjectConfig(BaseModel):
     """object 模式配置"""
 
-    prefix: str = "events"
+    prefix: str = "scraper:tieba:events"
     max_len: int = Field(10000, gt=0)
     approx: bool = True
     json_compact: bool = True
@@ -256,6 +256,10 @@ class Config:
     @property
     def consumer_id_maxlen(self) -> int:
         return self.pydantic_config.consumer.id_.max_len
+
+    @property
+    def consumer_object_prefix(self) -> str:
+        return self.pydantic_config.consumer.object.prefix
 
     @property
     def consumer_object_maxlen(self) -> int:

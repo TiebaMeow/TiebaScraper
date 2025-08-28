@@ -13,10 +13,12 @@ async def main() -> None:
     # 创建异步 Redis 客户端并开启 decode_responses，避免应用层手动 decode
     redis = Redis(host="localhost", port=6379, db=0, decode_responses=True)
 
-    # 指定单一 Stream 名称、消费者组和消费者名称
+    # 指定 Stream 名称
+    # stream key 构造：f"{stream_prefix}:{fid}:{object_type}"
+    stream_key = "scraper:tieba:events:123456789:thread"
+    # 指定消费者组和消费者名称
     # 不同消费者组可以同时获取同一条消息（广播）
     # 但同一消费者组中只有一个消费者会被分配到该条消息（负载均衡）
-    stream_key = "scraper:tieba:events"
     group = "mygroup"
     consumer = "consumer1"
 
@@ -46,7 +48,7 @@ async def main() -> None:
             # 消息结构示例：
             # [
             #     (
-            #         "scraper:tieba:events",
+            #         "scraper:tieba:events:123456789:thread",
             #         [
             #             (
             #                 "1714389534321-0",
@@ -85,6 +87,10 @@ async def main() -> None:
             # 处理流程
             # ...
             print(obj)
+            await asyncio.sleep(1)
+
+            # 如果没有设定 noack=True，则需要在成功处理后使用 XACK 确认
+            # await redis.xack(stream_key, group, msg_id)
 
     except asyncio.CancelledError:
         # 任务取消时允许向上传播以触发 finally
