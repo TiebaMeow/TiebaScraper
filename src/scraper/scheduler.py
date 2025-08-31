@@ -7,14 +7,18 @@
 使用单一类实现，内部通过不同的方法承载不同模式的逻辑，便于维护与扩展。
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 from asyncio import PriorityQueue
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
-from ..core import Container
-from ..models import Forum
 from .tasks import PartmanMaintenanceTask, Priority, ScanThreadsTask, Task
+
+if TYPE_CHECKING:
+    from ..core import Container
+    from ..models import Forum
 
 log = logging.getLogger("scheduler")
 

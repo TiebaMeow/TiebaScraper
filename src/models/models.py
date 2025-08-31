@@ -11,7 +11,7 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import BIGINT, DateTime, Index, Integer, String, Text
@@ -121,19 +121,6 @@ class AiotiebaConvertible:
     """
     为可以从aiotieba对象转换的模型定义一个通用接口的抽象基类。
     """
-
-    @classmethod
-    def from_aiotieba(cls: type[Self], obj: AiotiebaType) -> Self:
-        """
-        从aiotieba库返回的对象创建模型实例的抽象方法。
-
-        Args:
-            obj: aiotieba返回的对象。
-
-        Returns:
-            一个模型类的实例。
-        """
-        raise NotImplementedError
 
     @staticmethod
     def _convert_fragment(obj: AiotiebaType) -> Fragment:

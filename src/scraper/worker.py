@@ -13,15 +13,15 @@
 - Worker: 工作器主类，统一调度各种处理器
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 from abc import ABC, abstractmethod
 from asyncio import PriorityQueue
-from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
-from aiotieba.api.get_posts._classdef import Comment_p
 from aiotieba.enums import PostSortType
-from aiotieba.typing import Comment, Comments, Post, Posts, Thread, Threads
 
 from ..core import Container, DataStore
 from ..models import Comment as CommentModel
@@ -38,6 +38,12 @@ from .tasks import (
     ScanThreadsTask,
     Task,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from aiotieba.api.get_posts._classdef import Comment_p
+    from aiotieba.typing import Comment, Comments, Post, Posts, Thread, Threads
 
 log = logging.getLogger("worker")
 

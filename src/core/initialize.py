@@ -4,16 +4,20 @@
 例如初始化数据库中的监控贴吧列表等。
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncConnection
 
 from ..config import Config
 from ..models import Base, Forum
 from .container import Container
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncConnection
 
 log = logging.getLogger("initialize")
 

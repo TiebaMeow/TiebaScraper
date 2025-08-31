@@ -4,10 +4,12 @@
 主要功能包括数据去重、批量保存、状态追踪和消息队列管理。
 """
 
+from __future__ import annotations
+
 import logging
 from contextlib import asynccontextmanager
 from time import perf_counter
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import aiotieba.typing as aiotieba
 from cashews import Cache, add_prefix
@@ -16,8 +18,10 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 
 from ..models import Comment, Forum, Post, Thread, User
-from .container import Container
 from .publisher import EventEnvelope, NoopPublisher, RedisStreamsPublisher, build_envelope
+
+if TYPE_CHECKING:
+    from .container import Container
 
 ItemType = Literal["thread", "post", "comment"]
 AiotiebaType = aiotieba.Thread | aiotieba.Post | aiotieba.Comment
