@@ -1,15 +1,46 @@
+from __future__ import annotations
+
 import asyncio
-from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from functools import wraps
-from inspect import iscoroutinefunction as awaitable
-from typing import Any
+from typing import TYPE_CHECKING
 
 import aiotieba as tb
-from aiolimiter import AsyncLimiter
 from aiotieba.exception import HTTPStatusError, TiebaServerError
-from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt
+from tenacity import retry, retry_if_exception_type, stop_after_attempt
 from tenacity.wait import wait_exponential_jitter
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
+    from aiolimiter import AsyncLimiter
+
+
+def with_limit_and_retry(func):
+    """为客户端方法应用限流与重试。"""
+
+    @wraps(func)
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential_jitter(initial=0.5, max=3.0),
+        retry=retry_if_exception_type((
+            asyncio.TimeoutError,
+            ConnectionError,
+            OSError,
+            HTTPStatusError,
+            TiebaServerError,
+        )),
+        reraise=True,
+    )
+    async def wrapper(self, *args, **kwargs):
+        async with self.rate_limiter():
+            ret = await func(self, *args, **kwargs)
+            err = getattr(ret, "err", None)
+            if err:
+                raise err
+            return ret
+
+    return wrapper
 
 
 class Client(tb.Client):
@@ -19,17 +50,9 @@ class Client(tb.Client):
     通过装饰器和上下文管理器的方式，为所有API调用提供统一的速率限制和并发控制。
 
     Attributes:
-        RATE_LIMITED_METHODS (set): 需要速率限制的API方法集合。
         limiter (AsyncLimiter): 用于控制每秒请求数的限流器。
         semaphore (asyncio.Semaphore): 用于控制最大并发数的信号量。
     """
-
-    RATE_LIMITED_METHODS = {
-        "get_threads",
-        "get_posts",
-        "get_comments",
-        "get_fid",
-    }
 
     def __init__(self, *args, limiter: AsyncLimiter, semaphore: asyncio.Semaphore, **kwargs):
         """初始化扩展的aiotieba客户端。
@@ -68,48 +91,23 @@ class Client(tb.Client):
             async with self.semaphore:
                 yield
 
-    def __getattribute__(self, name: str) -> Any:
-        """拦截方法调用，为指定的API方法自动添加速率限制。
+    @with_limit_and_retry
+    async def get_threads(self, *args, **kwargs):
+        return await super().get_threads(*args, **kwargs)
 
-        Args:
-            name (str): 方法名。
+    @with_limit_and_retry
+    async def get_posts(self, *args, **kwargs):
+        return await super().get_posts(*args, **kwargs)
 
-        Returns:
-            Any: 返回原方法或装饰后的速率限制方法。
-        """
-        attr = super().__getattribute__(name)
+    @with_limit_and_retry
+    async def get_comments(self, *args, **kwargs):
+        return await super().get_comments(*args, **kwargs)
 
-        rate_limited_methods = object.__getattribute__(self, "RATE_LIMITED_METHODS")
+    @with_limit_and_retry
+    async def get_fid(self, *args, **kwargs):
+        return await super().get_fid(*args, **kwargs)
 
-        if name in rate_limited_methods and awaitable(attr):
-
-            @wraps(attr)
-            async def rate_limited_wrapper(*args, **kwargs) -> Any:
-                async with self.rate_limiter():
-                    async for attempt in AsyncRetrying(
-                        stop=stop_after_attempt(3),
-                        wait=wait_exponential_jitter(initial=0.5, max=3.0),
-                        retry=retry_if_exception_type((
-                            asyncio.TimeoutError,
-                            ConnectionError,
-                            OSError,
-                            HTTPStatusError,
-                            TiebaServerError,
-                        )),
-                        reraise=True,
-                    ):
-                        with attempt:
-                            ret = await attr(*args, **kwargs)
-                            err = getattr(ret, "err", None)
-                            if err:
-                                raise err
-                            return ret
-
-            return rate_limited_wrapper
-
-        return attr
-
-    async def __aenter__(self) -> "Client":
+    async def __aenter__(self) -> Client:
         await super().__aenter__()
         return self
 
