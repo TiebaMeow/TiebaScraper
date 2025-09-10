@@ -78,8 +78,8 @@ max_len = 10000
 # object 模式配置
 [consumer.object]
 # 以下配置项仅 object 模式生效
-# stream 键
-stream_key = "scraper:tieba:events"
+# stream 前缀
+prefix = "scraper:tieba:events"
 # stream 最大长度
 max_len = 10000
 # 近似长度，允许稍微超过最大长度以保证性能

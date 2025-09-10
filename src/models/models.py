@@ -57,7 +57,7 @@ def now_with_tz():
 
 
 def _partition_enabled() -> bool:
-    """从 config.toml 或环境变量读取是否启用分区，默认启用。"""
+    """从 config.toml 或环境变量读取是否启用分区，默认不启用。"""
 
     env_val = os.getenv("PARTITION_ENABLED")
     if env_val is not None:
@@ -78,7 +78,7 @@ def _partition_enabled() -> bool:
     except Exception:
         pass
 
-    return True
+    return False
 
 
 _PARTITION_ENABLED = _partition_enabled()

@@ -83,7 +83,7 @@ class TaskHandler(ABC):
     @abstractmethod
     async def handle(self, task_content):
         """处理任务的抽象方法"""
-        ...
+        raise NotImplementedError
 
 
 class ThreadsTaskHandler(TaskHandler):
