@@ -111,7 +111,7 @@ class MixinBase(Base):
         for c in self.__table__.columns:
             value = getattr(self, c.name)
             if c.name == "contents" and value is not None:
-                result[c.name] = [frag.dict() for frag in value]
+                result[c.name] = [frag.model_dump() for frag in value]
             else:
                 result[c.name] = value
         return result
