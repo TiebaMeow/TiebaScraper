@@ -7,8 +7,25 @@ on:
     branches: [ main ]
 
 jobs:
-  lint:
+  test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: tiebascraper
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres" --health-interval=10s --health-timeout=5s --health-retries=5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping" --health-interval=10s --health-timeout=5s --health-retries=5
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -31,8 +48,22 @@ jobs:
         run: |
           uv sync --dev
 
-      - name: Ruff (lint + format check)
+      - name: Wait for services
         run: |
-          uv run ruff format --check .
-          uv run ruff check .
+          for i in {1..30}; do
+            (echo > /dev/tcp/127.0.0.1/5432) && (echo > /dev/tcp/127.0.0.1/6379) && break || sleep 2;
+          done
+
+      - name: Run tests
+        env:
+          CI: "true"
+          DB_HOST: 127.0.0.1
+          DB_PORT: 5432
+          DB_USER: postgres
+          DB_PASSWORD: postgres
+          DB_NAME: tiebascraper
+          REDIS_HOST: 127.0.0.1
+          REDIS_PORT: 6379
+        run: |
+          uv run pytest
 
