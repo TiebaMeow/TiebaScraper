@@ -19,7 +19,7 @@ import asyncio
 import logging
 from abc import ABC, abstractmethod
 from asyncio import PriorityQueue
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from aiotieba.enums import PostSortType
 
@@ -81,7 +81,7 @@ class TaskHandler(ABC):
         await self.datastore.save_items(user_info_models)
 
     @abstractmethod
-    async def handle(self, task_content):
+    async def handle(self, task_content) -> None:
         """处理任务的抽象方法"""
         raise NotImplementedError
 
@@ -817,11 +817,15 @@ class Worker:
         handlers: 任务类型到处理器的映射字典。
     """
 
+    _datastore: ClassVar[DataStore | None] = None
+
     def __init__(self, worker_id: int, queue: PriorityQueue, container: Container):
         self.worker_id = worker_id
         self.queue = queue
         self.container = container
-        self.datastore = DataStore(container)
+        if Worker._datastore is None:
+            Worker._datastore = DataStore(container)
+        self.datastore = Worker._datastore
         self.log = logging.getLogger(f"Worker-{worker_id}")
 
         # 初始化任务处理器

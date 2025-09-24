@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 from time import perf_counter
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, ClassVar, Literal
 
 import aiotieba.typing as aiotieba
 from cashews import Cache, add_prefix
@@ -55,6 +55,8 @@ class DataStore:
         cache: Cashews Redis缓存实例
     """
 
+    _cache: ClassVar[Cache | None] = None
+
     def __init__(self, container: Container):
         """初始化数据存储层。
 
@@ -65,12 +67,14 @@ class DataStore:
         self.redis = container.redis_client
         self.async_sessionmaker = container.async_sessionmaker
 
-        self.cache = Cache()
-        self.cache.setup(
-            self.container.config.redis_url,
-            middlewares=(add_prefix("processed:"),),
-            client_side=True,
-        )
+        if DataStore._cache is None:
+            DataStore._cache = Cache()
+            DataStore._cache.setup(
+                self.container.config.redis_url,
+                middlewares=(add_prefix("processed:"),),
+                client_side=True,
+            )
+        self.cache = DataStore._cache
 
         self.consumer_mode = self.container.config.consumer_mode
 
