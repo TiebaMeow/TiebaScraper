@@ -69,6 +69,8 @@ class DataStore:
 
         if DataStore._cache is None:
             DataStore._cache = Cache()
+            if self.container.config.cache_backend == "memory":
+                DataStore._cache.setup(f"memory://?size={self.container.config.cache_max_size}")
             DataStore._cache.setup(
                 self.container.config.redis_url,
                 middlewares=(add_prefix("processed:"),),
@@ -204,7 +206,7 @@ class DataStore:
             return
 
         updates = {f"{item_type}:{item_id}": True for item_id in new_ids}
-        await self.cache.set_many(updates, expire="1d")
+        await self.cache.set_many(updates, expire=self.container.config.cache_ttl_seconds)
 
         log.debug(f"Marked {len(new_ids)} new {item_type} IDs as processed")
 

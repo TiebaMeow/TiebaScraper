@@ -57,6 +57,14 @@ class RateLimitConfig(BaseModel):
     concurrency: int = Field(8, gt=0)
 
 
+class CacheConfig(BaseModel):
+    """缓存配置模型"""
+
+    backend: Literal["memory", "redis"] = "memory"
+    max_size: int = Field(100000, gt=0)
+    ttl_seconds: int = Field(86400, gt=0)
+
+
 class SchedulerConfig(BaseModel):
     """调度器配置模型"""
 
@@ -228,6 +236,18 @@ class Config:
     @property
     def concurrency_limit(self) -> int:
         return self.pydantic_config.rate_limit.concurrency
+
+    @property
+    def cache_backend(self) -> Literal["memory", "redis"]:
+        return self.pydantic_config.cache.backend
+
+    @property
+    def cache_max_size(self) -> int:
+        return self.pydantic_config.cache.max_size
+
+    @property
+    def cache_ttl_seconds(self) -> int:
+        return self.pydantic_config.cache.ttl_seconds
 
     @property
     def scheduler_interval_seconds(self) -> int:

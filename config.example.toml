@@ -47,6 +47,16 @@ rps = 10
 # 并发数限制
 concurrency = 4
 
+# 缓存配置
+[cache]
+# 缓存后端，可选"memory"或"redis"
+backend = "memory"
+# 缓存最大大小
+# 仅在使用内存缓存时生效，过小可能造成缓存抖动
+max_size = 100000
+# 缓存过期时间（秒）
+ttl_seconds = 86400
+
 # 调度器配置
 [scheduler]
 # 以下配置项仅 periodic/hybrid 模式生效
