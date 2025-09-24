@@ -28,6 +28,7 @@ p_interval = "1 month"
 p_premake = 4
 
 # Redis 连接信息
+# 当缓存后端或消费者推送方式选择 redis 时需要配置
 [redis]
 # Redis 主机地址
 host = "localhost"
@@ -71,13 +72,26 @@ maintenance_enabled = true
 
 # 消费者配置
 [consumer]
-# 向 Redis 推送的模式，可选"id", "object"或"none"
-# id 为仅推送内容类型与 tid/pid
-# object 为推送完整序列化后的 aiotieba 对象
+# 推送方式，可选"redis", "websocket"或"none"
+# 推荐使用 redis，其作为中间件能够提供高可靠性
+# websocket 无需依赖 redis，但不保证消息不丢失
 # none 为不推送
+transport = "websocket"
+# 推送模式，可选"id", "object"或"none"
+# id 为仅推送内容类型与 tid/pid，通过回表查询或手动 fetch 获取完整对象
+# object 为推送完整序列化后的 aiotieba 对象
 mode = "id"
 
-# id 模式配置
+[consumer.websocket]
+# 以下配置项仅 websocket 模式生效
+# WebSocket Host
+host = "localhost"
+# WebSocket 端口
+port = 8000
+# WebSocket 路径（建议保持默认）
+path = "/ws"
+
+# Redis id 模式配置
 [consumer.id]
 # 以下配置项仅 id 模式生效
 # id 队列的 Redis 键
@@ -85,7 +99,7 @@ queue_key = "scraper:tieba:queue"
 # id 队列的最大长度
 max_len = 10000
 
-# object 模式配置
+# Redis object 模式配置
 [consumer.object]
 # 以下配置项仅 object 模式生效
 # stream 前缀

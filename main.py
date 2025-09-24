@@ -79,6 +79,12 @@ async def main(mode: Literal["periodic", "backfill", "hybrid"] = "periodic"):
             await asyncio.gather(*tasks, return_exceptions=True)
 
         log.info("Shutting down application...")
+
+        try:
+            await Worker.close_datastore()
+        except Exception:
+            pass
+
         await container.teardown()
 
 

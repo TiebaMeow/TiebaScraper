@@ -16,6 +16,7 @@ from pydantic import (
     PostgresDsn,
     RedisDsn,
     ValidationError,
+    WebsocketUrl,
     computed_field,
 )
 
@@ -74,6 +75,14 @@ class SchedulerConfig(BaseModel):
     maintenance_enabled: bool = True
 
 
+class ConsumerWebSocketConfig(BaseModel):
+    """WebSocket 模式配置"""
+
+    host: str = "localhost"
+    port: int = 8000
+    path: str = "/ws"
+
+
 class ConsumerIdConfig(BaseModel):
     """id 模式配置"""
 
@@ -101,7 +110,9 @@ class ConsumerPublishConfig(BaseModel):
 class ConsumerConfig(BaseModel):
     """消费者推送配置"""
 
-    mode: Literal["id", "object", "none"] = "id"
+    transport: Literal["redis", "websocket", "none"] = "websocket"
+    mode: Literal["id", "object"] = "id"
+    websocket: ConsumerWebSocketConfig = Field(default_factory=ConsumerWebSocketConfig)
     id_: ConsumerIdConfig = Field(default_factory=lambda: ConsumerIdConfig(max_len=10000))
     object: ConsumerObjectConfig = Field(default_factory=lambda: ConsumerObjectConfig(max_len=10000))
     publish: ConsumerPublishConfig = Field(
@@ -116,6 +127,9 @@ class PydanticConfig(BaseModel):
     redis: RedisConfig = Field(default_factory=RedisConfig)
     tieba: TiebaConfig
     rate_limit: RateLimitConfig = Field(default_factory=lambda: RateLimitConfig(rps=10, concurrency=8))
+    cache: CacheConfig = Field(
+        default_factory=lambda: CacheConfig(backend="memory", max_size=100000, ttl_seconds=86400)
+    )
     scheduler: SchedulerConfig = Field(
         default_factory=lambda: SchedulerConfig(
             interval_seconds=60, good_page_every_n_ticks=10, maintenance_every_n_ticks=10
@@ -146,6 +160,14 @@ class PydanticConfig(BaseModel):
                 f"redis://:{quote_plus(self.redis.password)}@{self.redis.host}:{self.redis.port}/{self.redis.db}"
             )
         return RedisDsn(f"redis://{self.redis.host}:{self.redis.port}/{self.redis.db}")
+
+    @computed_field
+    @property
+    def consumer_websocket_url(self) -> WebsocketUrl:
+        """生成WebSocket连接URL"""
+        return WebsocketUrl(
+            f"ws://{self.consumer.websocket.host}:{self.consumer.websocket.port}{self.consumer.websocket.path}"
+        )
 
 
 class Config:
@@ -266,8 +288,16 @@ class Config:
         return self.pydantic_config.scheduler.maintenance_enabled
 
     @property
-    def consumer_mode(self) -> Literal["id", "object", "none"]:
+    def consumer_transport(self) -> Literal["redis", "websocket", "none"]:
+        return self.pydantic_config.consumer.transport
+
+    @property
+    def consumer_mode(self) -> Literal["id", "object"]:
         return self.pydantic_config.consumer.mode
+
+    @property
+    def consumer_websocket_url(self) -> str:
+        return str(self.pydantic_config.consumer_websocket_url)
 
     @property
     def consumer_id_queue_key(self) -> str:

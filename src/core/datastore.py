@@ -18,7 +18,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 
 from ..models import Comment, Forum, Post, Thread, User
-from .publisher import EventEnvelope, NoopPublisher, RedisStreamsPublisher, build_envelope
+from .publisher import EventEnvelope, NoopPublisher, RedisStreamsPublisher, WebSocketPublisher, build_envelope
 
 if TYPE_CHECKING:
     from .container import Container
@@ -70,17 +70,20 @@ class DataStore:
         if DataStore._cache is None:
             DataStore._cache = Cache()
             if self.container.config.cache_backend == "memory":
-                DataStore._cache.setup(f"memory://?size={self.container.config.cache_max_size}")
-            DataStore._cache.setup(
-                self.container.config.redis_url,
-                middlewares=(add_prefix("processed:"),),
-                client_side=True,
-            )
+                DataStore._cache.setup(f"mem://?size={self.container.config.cache_max_size}")
+            else:
+                DataStore._cache.setup(
+                    self.container.config.redis_url,
+                    middlewares=(add_prefix("processed:"),),
+                    client_side=True,
+                )
         self.cache = DataStore._cache
 
+        # 发布通道与模式
+        self.consumer_transport = self.container.config.consumer_transport
         self.consumer_mode = self.container.config.consumer_mode
 
-        if self.consumer_mode in ("object", "id"):
+        if self.consumer_transport == "redis":
             self.publisher = RedisStreamsPublisher(
                 self.redis,  # type: ignore
                 stream_prefix=self.container.config.consumer_object_prefix,
@@ -92,8 +95,24 @@ class DataStore:
                 retry_backoff_ms=self.container.config.consumer_publish_retry_backoff_ms,
                 id_queue_key=self.container.config.consumer_id_queue_key,
             )
+        elif self.consumer_transport == "websocket":
+            self.publisher = WebSocketPublisher(
+                self.container.config.consumer_websocket_url,
+                timeout_ms=self.container.config.consumer_publish_timeout_ms,
+                max_retries=self.container.config.consumer_publish_max_retries,
+                retry_backoff_ms=self.container.config.consumer_publish_retry_backoff_ms,
+                json_compact=self.container.config.consumer_json_compact,
+            )
         else:
             self.publisher = NoopPublisher()
+
+    async def close(self) -> None:
+        """优雅关闭：释放发布器等资源（幂等）。"""
+        try:
+            if self.publisher is not None:
+                await self.publisher.close()
+        except Exception as e:
+            log.warning(f"Failed to close publisher: {e}")
 
     @asynccontextmanager
     async def get_session(self):

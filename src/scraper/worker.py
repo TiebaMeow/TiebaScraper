@@ -839,6 +839,16 @@ class Worker:
             ),
         }
 
+    @classmethod
+    async def close_datastore(cls) -> None:
+        """关闭共享 DataStore（用于应用退出时优雅清理）。"""
+        if cls._datastore is not None:
+            try:
+                await cls._datastore.close()
+            except Exception:
+                pass
+            cls._datastore = None
+
     async def run(self):
         """工作器主循环，持续从队列中获取并处理任务。
 

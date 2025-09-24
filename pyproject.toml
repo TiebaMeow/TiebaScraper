@@ -5,6 +5,7 @@ description = "A high-performance, extensible scraper for Baidu Tieba"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "aiohttp>=3.12.13",
     "aiolimiter>=1.2.1,<2",
     "aiotieba[speedup]>=4.6.0,<5",
     "asyncpg>=0.30.0,<1",

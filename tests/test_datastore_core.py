@@ -78,6 +78,13 @@ class DummySessionMaker:
 
 
 class DummyConfig:
+    # cache
+    cache_backend: str = "memory"
+    cache_max_size: int = 100000
+    cache_ttl_seconds: int = 86400
+
+    # consumer
+    consumer_transport: str = "redis"
     consumer_mode: str = "id"
     consumer_object_prefix: str = "s"
     consumer_object_maxlen: int = 100
@@ -87,6 +94,7 @@ class DummyConfig:
     consumer_publish_max_retries: int = 1
     consumer_publish_retry_backoff_ms: int = 1
     consumer_id_queue_key: str = "q"
+    consumer_websocket_url: str = "ws://127.0.0.1:8000/ws"
     redis_url: str = "redis://localhost:6379/0"
 
 

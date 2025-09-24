@@ -85,8 +85,9 @@ class Container:
             )
             log.info("PostgreSQL AsyncEngine created.")
 
-            self.redis_client = await redis.from_url(self.config.redis_url, decode_responses=True)
-            await self.redis_client.ping()
+            if self.config.consumer_transport == "redis":
+                self.redis_client = await redis.from_url(self.config.redis_url, decode_responses=True)
+                await self.redis_client.ping()
             log.info("Redis client connected successfully.")
 
             log.info("Container resources initialized successfully.")
