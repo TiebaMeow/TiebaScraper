@@ -321,6 +321,11 @@ class RedisStreamsPublisher(Publisher):
             fail_log_msg=f"Failed to enqueue to list={self.id_queue_key}",
         )
 
+        await self._retry(
+            lambda: self.redis.ltrim(self.id_queue_key, 0, max(self.maxlen - 1, 0)),  # type: ignore
+            fail_log_msg=f"Failed to trim list={self.id_queue_key}",
+        )
+
     async def publish_object(self, envelope: EventEnvelope) -> None:
         stream = f"{self.stream_prefix}:{envelope.fid}:{envelope.object_type}"
         data = envelope.to_json_bytes(self.json_compact)
