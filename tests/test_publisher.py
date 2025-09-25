@@ -3,6 +3,7 @@ from typing import Any, cast
 
 import pytest
 
+from src.config import ConsumerConfig
 from src.core.publisher import RedisStreamsPublisher, build_envelope
 
 
@@ -55,14 +56,13 @@ async def test_build_envelope_and_publish_with_retry():
     redis = DummyRedis()
     pub = RedisStreamsPublisher(
         cast("Any", redis),
-        stream_prefix="s",
-        maxlen=10,
-        approx=True,
-        json_compact=True,
-        timeout_ms=50,
-        max_retries=3,
-        retry_backoff_ms=1,
-        id_queue_key="q",
+        consumer_config=ConsumerConfig(
+            max_len=10,
+            timeout_ms=50,
+            max_retries=3,
+            retry_backoff_ms=1,
+            id_queue_key="q",
+        ),
     )
 
     t = _Thread(tid=11, fid=22, fname="bar")

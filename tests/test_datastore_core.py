@@ -1,105 +1,137 @@
+import json
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
+from src.config import ConsumerConfig
 from src.core.datastore import DataStore
 
 
 class DummyCache:
-    def __init__(self):
+    def __init__(self) -> None:
         self._kv: dict[str, object] = {}
 
-    async def get_many(self, *keys):
+    async def get_many(self, *keys: str) -> dict[str, object]:
         return {k: self._kv[k] for k in keys if k in self._kv}
 
-    async def set_many(self, d: dict[str, object], expire: str):
-        self._kv.update(d)
+    async def set_many(self, mapping: dict[str, object], expire: int | float | None = None) -> None:
+        self._kv.update(mapping)
 
 
 class DummyRedis:
-    def __init__(self):
+    def __init__(self) -> None:
         self.lists: dict[str, list[str]] = {}
         self.streams: dict[str, list[bytes]] = {}
 
-    async def lpush(self, key, value):
-        self.lists.setdefault(key, []).append(value)
-        return len(self.lists[key])
+    async def lpush(self, key: str, value: str) -> int:
+        lst = self.lists.setdefault(key, [])
+        lst.insert(0, value)
+        return len(lst)
 
-    async def xadd(self, stream, entry, maxlen=None, approximate=None):
-        self.streams.setdefault(stream, []).append(entry["data"])  # type: ignore[index]
-        return f"0-{len(self.streams[stream])}"
+    async def ltrim(self, key: str, start: int, stop: int) -> None:
+        if key not in self.lists:
+            return
+        self.lists[key] = self.lists[key][start : stop + 1 if stop >= 0 else None]
 
-    async def wait(self, n, timeout_ms):
+    async def xadd(
+        self,
+        stream: str,
+        entry: dict[str, bytes],
+        maxlen: int | None = None,
+        approximate: bool | None = None,
+    ) -> str:
+        bucket = self.streams.setdefault(stream, [])
+        bucket.append(entry["data"])
+        if maxlen is not None and len(bucket) > maxlen:
+            del bucket[:-maxlen]
+        return f"0-{len(bucket)}"
+
+    async def wait(self, n: int, timeout_ms: int) -> int:
         return 1
 
 
 class DummySession:
-    def __init__(self, existing_ids: set[int]):
+    def __init__(self, existing_ids: set[int]) -> None:
         self.existing_ids = existing_ids
         self._tx_committed = False
 
-    async def execute(self, statement):
+    async def execute(self, statement: object):
         class Result:
-            def __init__(self, ids):
+            def __init__(self, ids: set[int]) -> None:
                 self._ids = ids
 
-            def fetchall(self):
+            def fetchall(self) -> list[tuple[int]]:
                 return [(i,) for i in self._ids]
 
-            def scalars(self):
+            def scalars(self) -> "Result":
                 return self
 
-            def all(self):
+            def all(self) -> list[Any]:
                 return []
 
-        # Simpler: our test paths don't rely on the actual SQL; just return configured ids
         return Result(self.existing_ids)
 
-    async def commit(self):
+    async def commit(self) -> None:
         self._tx_committed = True
 
-    async def rollback(self):
+    async def rollback(self) -> None:
         pass
 
 
 class DummySessionMaker:
-    def __init__(self, session: DummySession):
+    def __init__(self, session: DummySession) -> None:
         self._session = session
 
-    def __call__(self):
+    def __call__(self) -> "DummySessionMaker":
         return self
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> DummySession:
         return self._session
 
-    async def __aexit__(self, *exc):
+    async def __aexit__(self, *exc: object) -> bool:
         return False
 
 
 class DummyConfig:
-    # cache
-    cache_backend: str = "memory"
-    cache_max_size: int = 100000
-    cache_ttl_seconds: int = 86400
+    def __init__(self) -> None:
+        self.cache_backend = "memory"
+        self.cache_max_size = 100_000
+        self.cache_ttl_seconds = 86400
 
-    # consumer
-    consumer_transport: str = "redis"
-    consumer_mode: str = "id"
-    consumer_object_prefix: str = "s"
-    consumer_object_maxlen: int = 100
-    consumer_object_approx: bool = True
-    consumer_json_compact: bool = True
-    consumer_publish_timeout_ms: int = 100
-    consumer_publish_max_retries: int = 1
-    consumer_publish_retry_backoff_ms: int = 1
-    consumer_id_queue_key: str = "q"
-    consumer_websocket_url: str = "ws://127.0.0.1:8000/ws"
-    redis_url: str = "redis://localhost:6379/0"
+        self._consumer_config = ConsumerConfig(
+            transport="redis",
+            mode="id",
+            max_len=16,
+            id_queue_key="test:id:queue",
+            stream_prefix="test:stream",
+            timeout_ms=200,
+            max_retries=3,
+            retry_backoff_ms=10,
+        )
+
+        self.consumer_transport = "redis"
+        self.redis_url = "redis://localhost:6379/0"
+        self.websocket_enabled = False
+        self.websocket_url = "ws://127.0.0.1:0/ws"
+
+        self.consumer_mode = "id"
+
+    @property
+    def consumer_config(self) -> ConsumerConfig:
+        return self._consumer_config
+
+    @property
+    def consumer_mode(self) -> str:
+        return self._consumer_config.mode
+
+    @consumer_mode.setter
+    def consumer_mode(self, value: str) -> None:
+        self._consumer_config.mode = value  # type: ignore[assignment]
 
 
 class DummyContainer:
-    def __init__(self, session: DummySession, redis_client: DummyRedis):
+    def __init__(self, session: DummySession, redis_client: DummyRedis) -> None:
         self.redis_client = redis_client
         self.async_sessionmaker = DummySessionMaker(session)
         self.config = DummyConfig()
@@ -107,40 +139,49 @@ class DummyContainer:
 
 @pytest.mark.asyncio
 async def test_filter_by_cache_and_mark_processed():
+    DataStore._cache = None
+
     dummy_session = DummySession(existing_ids=set())
     dummy_redis = DummyRedis()
     container = DummyContainer(dummy_session, dummy_redis)
 
     ds = DataStore(cast("Any", container))
-    # swap out networked cache with in-memory dummy
     ds.cache = cast("Any", DummyCache())
 
     new = await ds._filter_by_cache("thread", [1, 2, 3])
     assert new == {1, 2, 3}
+
     await ds._mark_as_processed("thread", new)
-    # second time should be filtered out by cache
-    new2 = await ds._filter_by_cache("thread", [1, 2, 3])
-    assert new2 == set()
+
+    new_again = await ds._filter_by_cache("thread", [1, 2, 3])
+    assert new_again == set()
 
 
 @pytest.mark.asyncio
 async def test_push_to_id_and_object_events():
+    DataStore._cache = None
+
     session = DummySession(existing_ids=set())
     redis = DummyRedis()
     container = DummyContainer(session, redis)
+
     ds = DataStore(cast("Any", container))
     ds.cache = cast("Any", DummyCache())
 
-    # id mode
     await ds.push_to_id_queue("post", 123)
-    assert redis.lists[container.config.consumer_id_queue_key]
+    assert container.config.consumer_config.id_queue_key in redis.lists
+    queued = redis.lists[container.config.consumer_config.id_queue_key][0]
+    assert json.loads(queued) == {"type": "post", "id": 123}
 
-    # switch to object mode and publish an envelope with minimal object stub
-    container.config.consumer_mode = "object"  # type: ignore[attr-defined]
-    ds2 = DataStore(cast("Any", container))
-    ds2.cache = cast("Any", DummyCache())
+    container.config.consumer_mode = "object"
 
-    obj = SimpleNamespace(fid=1, tid=77, pid=0, contents=None)
-    await ds2.push_object_event("thread", obj)  # type: ignore[arg-type]
-    # expect one stream created
-    assert any(k.startswith("s:1:thread") for k in redis.streams)
+    ds_object = DataStore(cast("Any", container))
+    ds_object.cache = cast("Any", DummyCache())
+
+    obj = SimpleNamespace(fid=1, tid=77, pid=0, cid=0)
+    await ds_object.push_object_event("thread", obj)  # type: ignore[arg-type]
+
+    stream_key = f"{container.config.consumer_config.stream_prefix}:1:thread"
+    assert stream_key in redis.streams
+    payload = redis.streams[stream_key][0]
+    assert payload.startswith(b"{")
