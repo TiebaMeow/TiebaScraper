@@ -68,6 +68,12 @@ class Scheduler:
 
         tick = 0
         while True:
+            forums = self.container.forums or []
+            if not forums:
+                self.log.warning("No forums configured. Waiting for %d seconds...", interval)
+                await asyncio.sleep(interval)
+                continue
+
             self.log.debug(
                 f"Scheduler tick #{tick}: Generating homepage scan tasks for forums: "
                 f"{[forum.fname for forum in forums]}"
