@@ -134,15 +134,15 @@ class DataStore:
                 await session.rollback()
                 raise
 
-    async def filter_new_ids(self, item_type: ItemType, ids: list[int]) -> set[int]:
+    async def filter_new_ids(self, item_type: ItemType | Literal["user"], ids: list[int]) -> set[int]:
         """使用客户端缓存过滤新ID。
 
         过滤策略如下：
-        1. Redis缓存检查（自动使用客户端本地缓存）
+        1. 内存缓存 / Redis缓存检查（自动使用客户端本地缓存）
         2. 数据库查重过滤（最终的真实性检查）
 
         Args:
-            item_type: 数据项类型，可选值为'thread'、'post'或'comment'。
+            item_type: 数据项类型，可选值为'thread'、'post'、'comment'或'user'。
             ids: 需要检查的ID列表。
 
         Returns:
@@ -151,7 +151,7 @@ class DataStore:
         if not ids:
             return set()
 
-        # 第一层：Redis缓存过滤（自动使用Client-Side Caching）
+        # 第一层：内存缓存 / Redis缓存(With Client-Side Caching)过滤
         ids_after_cache = await self._filter_by_cache(item_type, ids)
         if not ids_after_cache:
             return set()
@@ -164,16 +164,16 @@ class DataStore:
 
         return ids_after_db
 
-    async def _filter_by_cache(self, item_type: ItemType, ids: list[int]) -> set[int]:
-        """通过Redis缓存过滤（使用Client-Side Caching）。
+    async def _filter_by_cache(self, item_type: ItemType | Literal["user"], ids: list[int]) -> set[int]:
+        """通过内存缓存 / Redis缓存（With Client-Side Caching）过滤。
 
-        Client-Side Caching会自动：
+        Redis Client-Side Caching会自动：
         1. 首先检查本地缓存
         2. 本地缓存未命中时才查询Redis服务器
         3. 自动维护缓存一致性
 
         Args:
-            item_type: 数据项类型，可选值为'thread'、'post'或'comment'。
+            item_type: 数据项类型，可选值为'thread'、'post'、'comment'或'user'。
             ids: 需要检查的ID列表。
 
         Returns:
@@ -187,12 +187,12 @@ class DataStore:
         log.debug(f"Cache filter: {len(ids)} -> {len(new_ids)} for {item_type}")
         return new_ids
 
-    async def _filter_by_database(self, item_type: ItemType, ids: list[int]) -> set[int]:
+    async def _filter_by_database(self, item_type: ItemType | Literal["user"], ids: list[int]) -> set[int]:
         """数据库查重过滤
 
         根据item_type从数据库中查询已存在的ID，并返回未存在的ID集合。
         Args:
-            item_type: 数据项类型，可选值为'thread'、'post'或'comment'。
+            item_type: 数据项类型，可选值为'thread'、'post'、'comment'或'user'。
             ids: 需要检查的ID列表。
 
         Returns:
@@ -202,7 +202,12 @@ class DataStore:
             return set()
 
         async with self.get_session() as session:
-            model_map = {"thread": Thread.tid, "post": Post.pid, "comment": Comment.cid}
+            model_map = {
+                "thread": Thread.tid,
+                "post": Post.pid,
+                "comment": Comment.cid,
+                "user": User.user_id,
+            }
             id_column = model_map.get(item_type)
             if not id_column:
                 raise ValueError(f"Unknown item_type: {item_type}")
@@ -219,7 +224,7 @@ class DataStore:
         log.debug(f"Database filter: {len(ids)} -> {len(new_ids)} for {item_type} (found {len(existing_ids)} existing)")
         return new_ids
 
-    async def _mark_as_processed(self, item_type: ItemType, new_ids: set[int]):
+    async def _mark_as_processed(self, item_type: ItemType | Literal["user"], new_ids: set[int]):
         """标记ID为已处理。"""
         if not new_ids:
             return
