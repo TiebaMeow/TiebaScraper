@@ -81,7 +81,7 @@ class TaskHandler(ABC):
         await self.datastore.save_items(user_info_models)
 
     @abstractmethod
-    async def handle(self, task_content) -> None:
+    async def handle(self, task_content):
         """处理任务的抽象方法"""
         raise NotImplementedError
 

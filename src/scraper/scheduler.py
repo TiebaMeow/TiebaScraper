@@ -94,7 +94,7 @@ class Scheduler:
         forums = self.container.forums or []
 
         if not forums:
-            self.log.warning("No forums configured in MONITORED_FORUMS. Scheduler will be idle.")
+            self.log.warning("No forums configured in tieba.forums. Scheduler will be idle.")
             return
 
         for forum in forums:
