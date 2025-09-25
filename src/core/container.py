@@ -129,8 +129,11 @@ class Container:
                     self.forums = [f for f in current if f.fname != fname]
                     return True
 
-                self.ws_server.on_add_forum(_add_forum)
-                self.ws_server.on_remove_forum(_remove_forum)
+                if self.config.mode == "periodic":
+                    self.ws_server.on_add_forum(_add_forum)
+                    self.ws_server.on_remove_forum(_remove_forum)
+                else:
+                    log.warning("WebSocket dynamic forum management is only supported in 'periodic' mode.")
                 await self.ws_server.start()
                 log.info("WebSocket server started: %s", self.ws_server.get_ws_url())
 
