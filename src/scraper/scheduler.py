@@ -63,7 +63,7 @@ class Scheduler:
         maint_every = self.container.config.maintenance_every_ticks
 
         if not forums:
-            self.log.warning("No forums configured in MONITORED_FORUMS. Scheduler will be idle.")
+            self.log.warning("No forums configured in tieba.forums. Scheduler will be idle.")
             return
 
         tick = 0

@@ -70,6 +70,21 @@ maintenance_every_n_ticks = 10
 # 是否启用分区维护任务（仅开启分区时生效）
 maintenance_enabled = true
 
+# WebSocket 服务配置
+# 用于动态添加/删除监控贴吧和向客户端推送事件
+[websocket]
+# 是否启用
+# 当消费者推送方式选择 websocket 时必须启用
+enabled = true
+# WebSocket Host
+host = "localhost"
+# WebSocket 端口
+port = 8000
+# WebSocket 路径（建议保持默认）
+path = "/ws"
+# 访问令牌（留空则不校验）
+token = ""
+
 # 消费者配置
 [consumer]
 # 推送方式，可选"redis", "websocket"或"none"
@@ -77,42 +92,17 @@ maintenance_enabled = true
 # websocket 无需依赖 redis，但不保证消息不丢失
 # none 为不推送
 transport = "websocket"
-# 推送模式，可选"id", "object"或"none"
+# 推送模式，可选"id", "object"
 # id 为仅推送内容类型与 tid/pid，通过回表查询或手动 fetch 获取完整对象
 # object 为推送完整序列化后的 aiotieba 对象
 mode = "id"
-
-[consumer.websocket]
-# 以下配置项仅 websocket 模式生效
-# WebSocket Host
-host = "localhost"
-# WebSocket 端口
-port = 8000
-# WebSocket 路径（建议保持默认）
-path = "/ws"
-
-# Redis id 模式配置
-[consumer.id]
-# 以下配置项仅 id 模式生效
-# id 队列的 Redis 键
+# id 队列, stream 或内部先进先出缓存队列的最大长度
+max_len = 10000
+# id 模式队列的 Redis 键
 queue_key = "scraper:tieba:queue"
-# id 队列的最大长度
-max_len = 10000
-
-# Redis object 模式配置
-[consumer.object]
-# 以下配置项仅 object 模式生效
-# stream 前缀
+# object 模式 Redis stream 的前缀
 prefix = "scraper:tieba:events"
-# stream 最大长度
-max_len = 10000
-# 近似长度，允许稍微超过最大长度以保证性能
-approx = true
-# 是否启用 JSON 压缩
-json_compact = true
-
 # 推送重试配置
-[consumer.publish]
 # 超时时间（毫秒）
 timeout_ms = 2000
 # 最大重试次数

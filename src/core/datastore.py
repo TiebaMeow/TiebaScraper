@@ -86,22 +86,13 @@ class DataStore:
         if self.consumer_transport == "redis":
             self.publisher = RedisStreamsPublisher(
                 self.redis,  # type: ignore
-                stream_prefix=self.container.config.consumer_object_prefix,
-                maxlen=self.container.config.consumer_object_maxlen,
-                approx=self.container.config.consumer_object_approx,
-                json_compact=self.container.config.consumer_json_compact,
-                timeout_ms=self.container.config.consumer_publish_timeout_ms,
-                max_retries=self.container.config.consumer_publish_max_retries,
-                retry_backoff_ms=self.container.config.consumer_publish_retry_backoff_ms,
-                id_queue_key=self.container.config.consumer_id_queue_key,
+                consumer_config=self.container.config.consumer_config,
             )
-        elif self.consumer_transport == "websocket":
+        elif self.consumer_transport == "websocket" and self.container.config.websocket_enabled:
             self.publisher = WebSocketPublisher(
-                self.container.config.consumer_websocket_url,
-                timeout_ms=self.container.config.consumer_publish_timeout_ms,
-                max_retries=self.container.config.consumer_publish_max_retries,
-                retry_backoff_ms=self.container.config.consumer_publish_retry_backoff_ms,
-                json_compact=self.container.config.consumer_json_compact,
+                self.container.config.websocket_url,
+                server=self.container.ws_server,
+                consumer_config=self.container.config.consumer_config,
             )
         else:
             self.publisher = NoopPublisher()

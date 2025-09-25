@@ -9,13 +9,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, cast
 from zoneinfo import ZoneInfo
 
-from aiohttp import web
-from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt, wait_fixed
+from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt, wait_exponential, wait_fixed
 
 from ..utils import to_jsonable
 
@@ -29,6 +29,10 @@ if TYPE_CHECKING:
 
     import aiotieba.typing as aiotieba
     import redis.asyncio as redis
+    from pydantic import WebsocketUrl
+
+    from ..config import ConsumerConfig
+    from .ws_server import WebSocketServer
 
     AiotiebaType = aiotieba.Thread | aiotieba.Post | aiotieba.Comment
 
@@ -56,14 +60,14 @@ class EventEnvelope:
     backfill: bool
     payload: dict[str, Any]
 
-    def to_json_bytes(self, compact: bool = True) -> bytes:
+    def to_json_bytes(self) -> bytes:
         try:
             if _orjson is not None:
-                return _orjson.dumps(self.__dict__, option=(_orjson.OPT_SORT_KEYS if compact else 0))
+                return _orjson.dumps(self.__dict__, option=_orjson.OPT_SERIALIZE_NUMPY)
             raise RuntimeError("orjson not available")
         except Exception as e:
             log.exception(f"orjson serialization failed, fallback to json: {e}")
-            return json.dumps(self.__dict__, separators=(",", ":") if compact else None).encode("utf-8")
+            return json.dumps(self.__dict__).encode("utf-8")
 
 
 class Publisher:
@@ -89,151 +93,126 @@ class NoopPublisher(Publisher):
 class WebSocketPublisher(Publisher):
     """基于 WebSocket 的对象事件发布器（服务端广播）。
 
-    启动一个内置的 WebSocket 服务端，接受下游消费者连接，并向所有在线连接广播事件。
+    需要传入一个已启动的 WebSocketServer 实例。
+    内部维护一个异步队列与后台任务，负责将消息广播给所有连接的客户端。
+    支持消息重试、队列容量限制（超出则丢弃最旧消息）等功能。
     """
 
     def __init__(
         self,
-        url: str,
+        url: WebsocketUrl,
         *,
-        timeout_ms: int = 2000,
-        max_retries: int = 5,
-        retry_backoff_ms: int = 200,
-        json_compact: bool = True,
+        server: WebSocketServer | None,
+        consumer_config: ConsumerConfig,
     ) -> None:
-        from urllib.parse import urlparse
+        if server is None:
+            raise ValueError("WebSocketPublisher requires an existing WebSocketServer instance")
 
         self.url = url
-        self.timeout_ms = timeout_ms
-        self.max_retries = max_retries
-        self.retry_backoff_ms = retry_backoff_ms
-        self.json_compact = json_compact
+        self.timeout_ms = consumer_config.timeout_ms
+        self.max_retries = consumer_config.max_retries
+        self.retry_backoff_ms = consumer_config.retry_backoff_ms
+        self.queue_capacity = consumer_config.max_len
 
-        p = urlparse(url)
-        self._host = p.hostname or "127.0.0.1"
-        self._port = p.port or 8000
-        self._path = p.path or "/ws"
+        self._server = server
 
-        self._server_started = False
-        self._server_lock = asyncio.Lock()
-        # aiohttp 相关对象
-        self._app: web.Application | None = None
-        self._runner: web.AppRunner | None = None
-        self._site: web.TCPSite | None = None
-        self._conns: set[web.WebSocketResponse] = set()
-        self._bound_port: int | None = None
+        self._queue: deque[str] = deque()
+        self._queue_lock = asyncio.Lock()
+        self._message_event = asyncio.Event()
+        self._stop_event = asyncio.Event()
+        self._worker_task: asyncio.Task[None] | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
-    async def _ws_handler(self, request: Any) -> web.WebSocketResponse:
-        """aiohttp WebSocket 处理器，按固定 path 建立连接并纳入广播集合。"""
-
-        ws = web.WebSocketResponse(autoclose=True, autoping=True)
-        await ws.prepare(request)
-
-        self._conns.add(ws)
-        try:
-            # 读取并忽略客户端消息，仅用于保持连接直到对端关闭
-            async for _ in ws:
-                pass
-        finally:
-            self._conns.discard(ws)
-        return ws
-
-    async def _ensure_server(self) -> None:
-        if self._server_started:
+    def _ensure_worker(self) -> None:
+        if self._worker_task is not None and not self._worker_task.done():
             return
-        async with self._server_lock:
-            if self._server_started:
+        loop = self._loop
+        if loop is None:
+            loop = asyncio.get_running_loop()
+            self._loop = loop
+        self._worker_task = loop.create_task(self._worker_loop())
+
+    async def _enqueue(self, message: str) -> None:
+        if self._stop_event.is_set():
+            log.warning("WebSocketPublisher is closed; dropping message")
+            return
+
+        dropped: str | None = None
+        async with self._queue_lock:
+            if len(self._queue) >= self.queue_capacity:
+                dropped = self._queue.popleft()
+            self._queue.append(message)
+            self._message_event.set()
+
+        if dropped is not None:
+            log.warning("WebSocketPublisher queue full; dropped oldest message")
+
+    async def _next_message(self) -> str | None:
+        while True:
+            async with self._queue_lock:
+                if self._queue:
+                    return self._queue.popleft()
+                if self._stop_event.is_set():
+                    return None
+                self._message_event.clear()
+            await self._message_event.wait()
+
+    async def _requeue_front(self, message: str) -> None:
+        if self._stop_event.is_set():
+            return
+        async with self._queue_lock:
+            if len(self._queue) >= self.queue_capacity:
+                log.warning("WebSocketPublisher queue full; dropping message on requeue")
                 return
+            self._queue.appendleft(message)
+            self._message_event.set()
 
-            self._app = web.Application()
-            # 仅注册指定 path 的 WebSocket 路由，其它路径返回 404
-            self._app.add_routes([web.get(self._path, self._ws_handler)])
+    async def _send_with_retry(self, message: str) -> bool:
+        base_wait = max(self.retry_backoff_ms, 10) / 1000.0
+        max_wait = max(self.timeout_ms / 1000.0, base_wait) if self.timeout_ms > 0 else None
+        wait_kwargs: dict[str, float] = {"multiplier": base_wait, "min": base_wait}
+        if max_wait is not None:
+            wait_kwargs["max"] = max_wait
 
-            self._runner = web.AppRunner(self._app)
-            await self._runner.setup()
-            self._site = web.TCPSite(self._runner, self._host, self._port)
-            await self._site.start()
-
-            # 若端口为 0，记录实际绑定端口用于测试/观测
-            actual_port = self._port
-            try:
-                addresses = getattr(self._runner, "addresses", None)
-                if addresses:
-                    addr0 = addresses[0]
-                    if isinstance(addr0, tuple) and len(addr0) >= 2:
-                        actual_port = int(addr0[1])
-                    elif isinstance(addr0, dict) and "port" in addr0:
-                        actual_port = int(addr0["port"])
-                else:
-                    sockets = getattr(getattr(self._site, "_server", None), "sockets", None)
-                    if sockets:
-                        actual_port = int(sockets[0].getsockname()[1])
-            except Exception:
-                pass
-            self._bound_port = actual_port
-
-            self._server_started = True
-            log.info(f"WebSocketPublisher serving on ws://{self._host}:{self._port}{self._path}")
-
-    def get_ws_url(self) -> str:
-        """返回当前服务端可连接的 WebSocket URL（包含实际绑定端口）。"""
-        port = self._bound_port or self._port
-        return f"ws://{self._host}:{port}{self._path}"
-
-    async def _broadcast_text(self, text: str) -> None:
-        await self._ensure_server()
-        if not self._conns:
-            # 无消费者连接时直接返回
-            return
-        to_remove: list[web.WebSocketResponse] = []
-        for ws in list(self._conns):
-            try:
-                await ws.send_str(text)
-            except Exception:
-                to_remove.append(ws)
-        for ws in to_remove:
-            self._conns.discard(ws)
-
-    async def close(self) -> None:
-        """优雅关闭：断开所有连接并停止站点/runner。"""
-        # 关闭所有客户端连接
-        for ws in list(self._conns):
-            try:
-                await ws.close()
-            except Exception:
-                pass
-        self._conns.clear()
-
-        # 停止站点和清理 runner
-        try:
-            if self._site is not None:
-                await self._site.stop()
-        except Exception:
-            pass
-        try:
-            if self._runner is not None:
-                await self._runner.cleanup()
-        except Exception:
-            pass
-
-        self._app = None
-        self._runner = None
-        self._site = None
-        self._server_started = False
-
-    async def _retry(self, func: Callable[[], Awaitable[Any]], *, fail_log_msg: str) -> Any:
         try:
             async for attempt in AsyncRetrying(
                 stop=stop_after_attempt(self.max_retries),
-                wait=wait_fixed(max(self.retry_backoff_ms, 0) / 1000.0),
+                wait=wait_exponential(**wait_kwargs),
                 retry=retry_if_exception_type(Exception),
                 reraise=True,
             ):
                 with attempt:
-                    return await func()
+                    delivered = await self._server.broadcast_text(message)
+                    if delivered:
+                        return True
+                    log.debug("WebSocketPublisher has no active subscribers; will retry later")
+                    return False
         except Exception as e:
-            log.exception(f"{fail_log_msg} after {self.max_retries} retries: {e}")
+            log.exception(
+                "Failed to broadcast message via WebSocket after %d retries: %s",
+                self.max_retries,
+                e,
+            )
+        return False
+
+    async def _worker_loop(self) -> None:
+        log.debug("WebSocketPublisher worker started")
+        try:
+            while True:
+                message = await self._next_message()
+                if message is None:
+                    break
+                delivered = await self._send_with_retry(message)
+                if delivered:
+                    continue
+                if self._stop_event.is_set():
+                    break
+                await self._requeue_front(message)
+                await asyncio.sleep(max(self.retry_backoff_ms, 10) / 1000.0)
+        except asyncio.CancelledError:
             raise
+        finally:
+            log.debug("WebSocketPublisher worker stopped")
 
     async def publish_id(self, item_type: ItemType, item_id: int) -> None:
         payload = {"type": item_type, "id": int(item_id)}
@@ -241,22 +220,49 @@ class WebSocketPublisher(Publisher):
             if _orjson is not None:
                 message = _orjson.dumps(payload).decode("utf-8")
             else:
-                message = json.dumps(payload, separators=(",", ":") if self.json_compact else None)
+                message = json.dumps(payload)
         except Exception:
             message = f'{{"type":"{item_type}","id":{int(item_id)}}}'
 
-        await self._retry(
-            lambda: self._broadcast_text(message),
-            fail_log_msg="Failed to broadcast ID message via WebSocket",
-        )
+        self._ensure_worker()
+        await self._enqueue(message)
 
     async def publish_object(self, envelope: EventEnvelope) -> None:
-        data = envelope.to_json_bytes(self.json_compact).decode("utf-8")
+        data = envelope.to_json_bytes().decode("utf-8")
 
-        await self._retry(
-            lambda: self._broadcast_text(data),
-            fail_log_msg="Failed to broadcast object via WebSocket",
-        )
+        self._ensure_worker()
+        await self._enqueue(data)
+
+    async def close(self) -> None:
+        if self._stop_event.is_set():
+            if self._worker_task is not None:
+                try:
+                    await self._worker_task
+                except Exception:
+                    pass
+            try:
+                await self._server.stop()
+            except Exception:
+                pass
+            return
+
+        self._stop_event.set()
+        self._message_event.set()
+
+        if self._worker_task is not None:
+            try:
+                await self._worker_task
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                pass
+            finally:
+                self._worker_task = None
+
+        try:
+            await self._server.stop()
+        except Exception:
+            pass
 
 
 class RedisStreamsPublisher(Publisher):
@@ -266,24 +272,15 @@ class RedisStreamsPublisher(Publisher):
         self,
         redis_client: redis.Redis,
         *,
-        stream_prefix: str = "scraper:tieba:events",
-        maxlen: int = 10000,
-        approx: bool = True,
-        json_compact: bool = True,
-        timeout_ms: int = 2000,
-        max_retries: int = 5,
-        retry_backoff_ms: int = 200,
-        id_queue_key: str = "scraper:tieba:queue",
+        consumer_config: ConsumerConfig,
     ) -> None:
         self.redis = redis_client
-        self.stream_prefix = stream_prefix
-        self.maxlen = maxlen
-        self.approx = approx
-        self.json_compact = json_compact
-        self.timeout_ms = timeout_ms
-        self.max_retries = max_retries
-        self.retry_backoff_ms = retry_backoff_ms
-        self.id_queue_key = id_queue_key
+        self.stream_prefix = consumer_config.stream_prefix
+        self.maxlen = consumer_config.max_len
+        self.timeout_ms = consumer_config.timeout_ms
+        self.max_retries = consumer_config.max_retries
+        self.retry_backoff_ms = consumer_config.retry_backoff_ms
+        self.id_queue_key = consumer_config.id_queue_key
 
     async def _retry(self, func: Callable[[], Awaitable[Any]], *, fail_log_msg: str) -> Any:
         try:
@@ -312,7 +309,7 @@ class RedisStreamsPublisher(Publisher):
             if _orjson is not None:
                 message = _orjson.dumps(payload).decode("utf-8")
             else:
-                message = json.dumps(payload, separators=(",", ":") if self.json_compact else None)
+                message = json.dumps(payload)
         except Exception:
             message = f'{{"type":"{item_type}","id":{int(item_id)}}}'
 
@@ -321,14 +318,14 @@ class RedisStreamsPublisher(Publisher):
             fail_log_msg=f"Failed to enqueue to list={self.id_queue_key}",
         )
 
-        await self._retry(
-            lambda: self.redis.ltrim(self.id_queue_key, 0, max(self.maxlen - 1, 0)),  # type: ignore
-            fail_log_msg=f"Failed to trim list={self.id_queue_key}",
-        )
+        try:
+            await self.redis.ltrim(self.id_queue_key, 0, self.maxlen - 1)  # type: ignore
+        except Exception:
+            pass
 
     async def publish_object(self, envelope: EventEnvelope) -> None:
         stream = f"{self.stream_prefix}:{envelope.fid}:{envelope.object_type}"
-        data = envelope.to_json_bytes(self.json_compact)
+        data = envelope.to_json_bytes()
 
         entry = {"data": data}
 
@@ -337,7 +334,6 @@ class RedisStreamsPublisher(Publisher):
                 stream,
                 cast("Any", entry),
                 maxlen=self.maxlen,
-                approximate=self.approx,
             ),
             fail_log_msg=f"Failed to publish to stream={stream}",
         )

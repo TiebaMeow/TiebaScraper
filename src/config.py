@@ -75,36 +75,14 @@ class SchedulerConfig(BaseModel):
     maintenance_enabled: bool = True
 
 
-class ConsumerWebSocketConfig(BaseModel):
+class WebSocketConfig(BaseModel):
     """WebSocket 模式配置"""
 
+    enabled: bool = True
     host: str = "localhost"
     port: int = 8000
     path: str = "/ws"
-
-
-class ConsumerIdConfig(BaseModel):
-    """id 模式配置"""
-
-    queue_key: str = "scraper:tieba:queue"
-    max_len: int = Field(10000, gt=0)
-
-
-class ConsumerObjectConfig(BaseModel):
-    """object 模式配置"""
-
-    prefix: str = "scraper:tieba:events"
-    max_len: int = Field(10000, gt=0)
-    approx: bool = True
-    json_compact: bool = True
-
-
-class ConsumerPublishConfig(BaseModel):
-    """发布通用配置（重试/超时）"""
-
-    timeout_ms: int = Field(2000, gt=0)
-    max_retries: int = Field(5, gt=0)
-    retry_backoff_ms: int = Field(200, gt=0)
+    token: str | None = None
 
 
 class ConsumerConfig(BaseModel):
@@ -112,12 +90,12 @@ class ConsumerConfig(BaseModel):
 
     transport: Literal["redis", "websocket", "none"] = "websocket"
     mode: Literal["id", "object"] = "id"
-    websocket: ConsumerWebSocketConfig = Field(default_factory=ConsumerWebSocketConfig)
-    id_: ConsumerIdConfig = Field(default_factory=lambda: ConsumerIdConfig(max_len=10000))
-    object: ConsumerObjectConfig = Field(default_factory=lambda: ConsumerObjectConfig(max_len=10000))
-    publish: ConsumerPublishConfig = Field(
-        default_factory=lambda: ConsumerPublishConfig(timeout_ms=2000, max_retries=5, retry_backoff_ms=200)
-    )
+    max_len: int = Field(10000, gt=0)
+    id_queue_key: str = "scraper:tieba:queue"
+    stream_prefix: str = "scraper:tieba:events"
+    timeout_ms: int = Field(2000, gt=0)
+    max_retries: int = Field(5, gt=0)
+    retry_backoff_ms: int = Field(200, gt=0)
 
 
 class PydanticConfig(BaseModel):
@@ -135,7 +113,12 @@ class PydanticConfig(BaseModel):
             interval_seconds=60, good_page_every_n_ticks=10, maintenance_every_n_ticks=10
         )
     )
-    consumer: ConsumerConfig = Field(default_factory=ConsumerConfig)
+    websocket: WebSocketConfig = Field(
+        default_factory=lambda: WebSocketConfig(enabled=True, host="localhost", port=8000)
+    )
+    consumer: ConsumerConfig = Field(
+        default_factory=lambda: ConsumerConfig(max_len=10000, timeout_ms=2000, max_retries=5, retry_backoff_ms=200)
+    )
 
     @computed_field
     @property
@@ -163,11 +146,9 @@ class PydanticConfig(BaseModel):
 
     @computed_field
     @property
-    def consumer_websocket_url(self) -> WebsocketUrl:
+    def websocket_url(self) -> WebsocketUrl:
         """生成WebSocket连接URL"""
-        return WebsocketUrl(
-            f"ws://{self.consumer.websocket.host}:{self.consumer.websocket.port}{self.consumer.websocket.path}"
-        )
+        return WebsocketUrl(f"ws://{self.websocket.host}:{self.websocket.port}{self.websocket.path}")
 
 
 class Config:
@@ -288,6 +269,18 @@ class Config:
         return self.pydantic_config.scheduler.maintenance_enabled
 
     @property
+    def websocket_url(self) -> WebsocketUrl:
+        return self.pydantic_config.websocket_url
+
+    @property
+    def websocket_enabled(self) -> bool:
+        return self.pydantic_config.websocket.enabled
+
+    @property
+    def websocket_token(self) -> str | None:
+        return self.pydantic_config.websocket.token
+
+    @property
     def consumer_transport(self) -> Literal["redis", "websocket", "none"]:
         return self.pydantic_config.consumer.transport
 
@@ -296,41 +289,5 @@ class Config:
         return self.pydantic_config.consumer.mode
 
     @property
-    def consumer_websocket_url(self) -> str:
-        return str(self.pydantic_config.consumer_websocket_url)
-
-    @property
-    def consumer_id_queue_key(self) -> str:
-        return self.pydantic_config.consumer.id_.queue_key
-
-    @property
-    def consumer_id_maxlen(self) -> int:
-        return self.pydantic_config.consumer.id_.max_len
-
-    @property
-    def consumer_object_prefix(self) -> str:
-        return self.pydantic_config.consumer.object.prefix
-
-    @property
-    def consumer_object_maxlen(self) -> int:
-        return self.pydantic_config.consumer.object.max_len
-
-    @property
-    def consumer_object_approx(self) -> bool:
-        return self.pydantic_config.consumer.object.approx
-
-    @property
-    def consumer_json_compact(self) -> bool:
-        return self.pydantic_config.consumer.object.json_compact
-
-    @property
-    def consumer_publish_timeout_ms(self) -> int:
-        return self.pydantic_config.consumer.publish.timeout_ms
-
-    @property
-    def consumer_publish_max_retries(self) -> int:
-        return self.pydantic_config.consumer.publish.max_retries
-
-    @property
-    def consumer_publish_retry_backoff_ms(self) -> int:
-        return self.pydantic_config.consumer.publish.retry_backoff_ms
+    def consumer_config(self) -> ConsumerConfig:
+        return self.pydantic_config.consumer

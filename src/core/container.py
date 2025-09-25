@@ -12,9 +12,11 @@ from typing import TYPE_CHECKING
 
 import redis.asyncio as redis
 from aiolimiter import AsyncLimiter
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from .client import Client
+from .ws_server import WebSocketServer
 
 if TYPE_CHECKING:
     from ..config import Config
@@ -54,6 +56,7 @@ class Container:
         self.redis_client: redis.Redis | None = None
         self.tb_client: Client | None = None
         self.forums: list[Forum] | None = None
+        self.ws_server: WebSocketServer | None = None
 
     async def setup(self):
         """异步初始化容器资源。
@@ -89,6 +92,51 @@ class Container:
                 self.redis_client = await redis.from_url(self.config.redis_url, decode_responses=True)
                 await self.redis_client.ping()
                 log.info("Redis client connected successfully.")
+            elif self.config.consumer_transport == "websocket" and self.config.websocket_enabled:
+                # 启动内置 WS 服务
+                self.ws_server = WebSocketServer(self.config.websocket_url, token=self.config.websocket_token)
+
+                async def _add_forum(fname: str) -> bool:
+                    assert self.tb_client is not None
+                    assert self.async_sessionmaker is not None
+                    fid = await self.tb_client.get_fid(fname)
+                    if not fid:
+                        return False
+
+                    from ..models import Forum as ForumModel  # local import to avoid cycle at top
+
+                    async with self.async_sessionmaker() as session:
+                        try:
+                            # 是否已存在
+                            res = await session.execute(select(ForumModel).where(ForumModel.fname == fname))
+                            exist = res.scalar_one_or_none()
+                            if exist is None:
+                                session.add(ForumModel(fid=fid, fname=fname))
+                                await session.commit()
+                                log.info("Added forum via WS: %s(fid=%s)", fname, fid)
+                            # 更新容器缓存
+                            current = self.forums or []
+                            if all(f.fname != fname for f in current):
+                                current.append(ForumModel(fid=fid, fname=fname))
+                                self.forums = current
+                            return True
+                        except Exception:
+                            await session.rollback()
+                            raise
+
+                async def _remove_forum(fname: str) -> bool:
+                    current = self.forums or []
+                    self.forums = [f for f in current if f.fname != fname]
+                    return True
+
+                self.ws_server.on_add_forum(_add_forum)
+                self.ws_server.on_remove_forum(_remove_forum)
+                await self.ws_server.start()
+                log.info("WebSocket server started: %s", self.ws_server.get_ws_url())
+
+            elif self.config.consumer_transport == "websocket":
+                log.warning("WebSocket consumer transport selected but WebSocket server is disabled in config.")
+                log.warning("Nothing will be sent to consumers.")
 
             log.info("Container resources initialized successfully.")
 
@@ -120,5 +168,12 @@ class Container:
         if self.tb_client:
             await self.tb_client.__aexit__()
             log.info("Tieba Client closed.")
+
+        if self.ws_server:
+            try:
+                await self.ws_server.stop()
+            except Exception:
+                pass
+            self.ws_server = None
 
         log.info("Container resources torn down successfully.")
