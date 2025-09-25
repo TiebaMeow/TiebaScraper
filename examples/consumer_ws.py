@@ -9,6 +9,7 @@ WS_URL = "ws://127.0.0.1:8000/ws"
 
 
 async def handle_message(raw: str) -> None:
+    """示例：处理从 WebSocket 接收到的消息。"""
     try:
         data: dict[str, Any] = json.loads(raw)
     except json.JSONDecodeError:
@@ -36,10 +37,55 @@ async def handle_message(raw: str) -> None:
         print(f"[warn] unknown message shape: {data}")
 
 
+async def _send_forum_command(
+    command: Literal["add_forum", "remove_forum"],
+    fname: str,
+    *,
+    url: str = WS_URL,
+    token: str | None = None,
+) -> None:
+    """示例：向 WebSocket 服务器发送 add/remove_forum 控制命令。"""
+
+    payload = json.dumps({"type": command, "fname": fname})
+    params: dict[str, str] | None = {"token": token} if token else None
+
+    try:
+        async with ClientSession() as session:
+            async with session.ws_connect(url, params=params) as ws:
+                await ws.send_str(payload)
+                try:
+                    msg = await asyncio.wait_for(ws.receive(), timeout=3.0)
+                except TimeoutError:
+                    print(f"[warn] no {command} ack for {fname!r}")
+                    return
+
+                if msg.type == WSMsgType.TEXT:
+                    print(f"[info] {command} ack: {msg.data}")
+                elif msg.type == WSMsgType.ERROR:
+                    print(f"[error] {command} failed: {getattr(msg, 'data', None)}")
+                else:
+                    print(f"[warn] unexpected response: {msg.type}")
+    except Exception as exc:
+        print(f"[error] {command} command error for {fname!r}: {exc}")
+
+
+async def add_forum_example(fname: str, *, url: str = WS_URL, token: str | None = None) -> None:
+    """示例：请求 Scraper 添加监控贴吧。"""
+
+    await _send_forum_command("add_forum", fname, url=url, token=token)
+
+
+async def remove_forum_example(fname: str, *, url: str = WS_URL, token: str | None = None) -> None:
+    """示例：请求 Scraper 取消监控贴吧。"""
+
+    await _send_forum_command("remove_forum", fname, url=url, token=token)
+
+
 async def main() -> None:
     """示例：通过 WebSocket 消费 Scraper 推送的事件。"""
 
     url = WS_URL
+    # await add_forum_example("吧名", url=url)
     try:
         async with ClientSession() as session:
             async with session.ws_connect(url) as ws:
