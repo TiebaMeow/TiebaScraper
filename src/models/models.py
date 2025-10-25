@@ -314,7 +314,7 @@ class Thread(MixinBase, AiotiebaConvertible):
             tid=thread.tid,
             create_time=datetime.fromtimestamp(thread.create_time, tz=SHANGHAI_TZ),
             title=thread.title,
-            text=thread.text,
+            text=thread.contents.text,
             contents=cls.convert_content_list(thread.contents.objs),
             last_time=thread.last_time,
             reply_num=thread.reply_num,

@@ -295,14 +295,16 @@ class FullScanPostsTaskHandler(TaskHandler):
             tid: 主题贴tid
             posts_page: 该页面的回复数据
         """
-        await self.ensure_users(posts_page.objs)
+        posts = [p for p in posts_page.objs if p.floor != 1]
 
-        post_models = [PostModel.from_aiotieba(p) for p in posts_page]
+        await self.ensure_users(posts)
+
+        post_models = [PostModel.from_aiotieba(p) for p in posts]
         await self.datastore.save_items(post_models)
 
         priority = Priority.BACKFILL if backfill else Priority.LOW
 
-        for post in posts_page.objs:
+        for post in posts:
             if not backfill:
                 await self.datastore.push_to_id_queue("post", post.pid)
                 await self.datastore.push_object_event("post", post)
@@ -448,7 +450,8 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
         Returns:
             bool: 是否还有新回复需要继续扫描
         """
-        all_pids_on_page = [p.pid for p in posts_page]
+        posts = [p for p in posts_page.objs if p.floor != 1]
+        all_pids_on_page = [p.pid for p in posts]
         new_pids = await self.datastore.filter_new_ids("post", all_pids_on_page)
         old_pids = set(all_pids_on_page) - new_pids
 
@@ -460,18 +463,18 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
             f"tid={posts_page.thread.tid}, pn={posts_page.page.current_page}: Found {len(new_pids)} new posts."
         )
 
-        await self._process_new_posts(new_pids, posts_page, backfill)
+        await self._process_new_posts(new_pids, posts, backfill)
 
-        await self._process_old_posts(old_pids, posts_page, backfill)
+        await self._process_old_posts(old_pids, posts, backfill)
 
-        await self._process_attached_comments(posts_page)
+        await self._process_attached_comments(posts)
 
         if any(p.create_time < last_time or p.floor < last_floor for p in posts_page):
             return False
 
         return True
 
-    async def _process_new_posts(self, new_pids: set[int], posts_page: Posts, backfill: bool):
+    async def _process_new_posts(self, new_pids: set[int], posts: list[Post], backfill: bool):
         """处理新发现的回复。
 
         主要流程：
@@ -486,7 +489,7 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
         if not new_pids:
             return
 
-        new_posts = [p for p in posts_page.objs if p.pid in new_pids]
+        new_posts = [p for p in posts if p.pid in new_pids]
 
         await self.ensure_users(new_posts)
 
@@ -509,7 +512,7 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
                     f"[{post.fname}吧] Scheduled FullScanCommentsTask for new pid={post.pid} in tid={post.tid}"
                 )
 
-    async def _process_old_posts(self, old_pids: set[int], posts_page: Posts, backfill: bool):
+    async def _process_old_posts(self, old_pids: set[int], posts: list[Post], backfill: bool):
         """处理已存在的回复，检查是否有更新。
 
         主要流程：
@@ -523,7 +526,7 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
         if not old_pids:
             return
 
-        old_posts = [p for p in posts_page.objs if p.pid in old_pids]
+        old_posts = [p for p in posts if p.pid in old_pids]
         stored_posts = await self.datastore.get_posts_by_pids(old_pids)
         stored_posts_map = {p.pid: p for p in stored_posts}
 
@@ -554,7 +557,7 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
             post_models = [PostModel.from_aiotieba(p) for p in posts_to_update]
             await self.datastore.save_items(post_models, upsert=True)
 
-    async def _process_attached_comments(self, posts: Posts):
+    async def _process_attached_comments(self, posts: list[Post]):
         """处理回复附带的楼中楼。
 
         对每个回复的楼中楼进行去重处理，保存新楼中楼到数据库。
