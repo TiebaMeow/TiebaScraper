@@ -79,7 +79,11 @@ class Container:
             self.semaphore = Semaphore(self.config.concurrency_limit)
             log.info(f"AioLimiter initialized with a rate of {self.config.rps_limit} RPS.")
 
-            self.tb_client = await Client(limiter=self.limiter, semaphore=self.semaphore).__aenter__()
+            self.tb_client = await Client(
+                limiter=self.limiter,
+                semaphore=self.semaphore,
+                cooldown_seconds_429=self.config.cooldown_seconds_429,
+            ).__aenter__()
             log.info("Tieba Client started.")
 
             self.db_engine = create_async_engine(self.config.database_url, echo=False)

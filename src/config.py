@@ -56,6 +56,7 @@ class RateLimitConfig(BaseModel):
 
     rps: int = Field(10, gt=0)
     concurrency: int = Field(8, gt=0)
+    cooldown_seconds_429: float = Field(5.0, gt=0)
 
 
 class CacheConfig(BaseModel):
@@ -104,7 +105,9 @@ class PydanticConfig(BaseModel):
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     redis: RedisConfig = Field(default_factory=RedisConfig)
     tieba: TiebaConfig
-    rate_limit: RateLimitConfig = Field(default_factory=lambda: RateLimitConfig(rps=10, concurrency=8))
+    rate_limit: RateLimitConfig = Field(
+        default_factory=lambda: RateLimitConfig(rps=10, concurrency=8, cooldown_seconds_429=5.0)
+    )
     cache: CacheConfig = Field(
         default_factory=lambda: CacheConfig(backend="memory", max_size=100000, ttl_seconds=86400)
     )
@@ -239,6 +242,10 @@ class Config:
     @property
     def concurrency_limit(self) -> int:
         return self.pydantic_config.rate_limit.concurrency
+
+    @property
+    def cooldown_seconds_429(self) -> float:
+        return self.pydantic_config.rate_limit.cooldown_seconds_429
 
     @property
     def cache_backend(self) -> Literal["memory", "redis"]:

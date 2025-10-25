@@ -1,44 +1,84 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from contextlib import asynccontextmanager
 from functools import wraps
 from typing import TYPE_CHECKING
 
 import aiotieba as tb
 from aiotieba.exception import HTTPStatusError, TiebaServerError
-from tenacity import retry, retry_if_exception_type, stop_after_attempt
-from tenacity.wait import wait_exponential_jitter
+from tenacity import (
+    AsyncRetrying,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential_jitter,
+    wait_fixed,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
     from aiolimiter import AsyncLimiter
+    from tenacity import RetryCallState
+
+logger = logging.getLogger(__name__)
+
+
+def _wait_after_error(retry_state: RetryCallState) -> float:
+    """
+    tenacity的等待回调函数。
+
+    将429错误交由全局冷却逻辑处理，其他错误使用指数退避等待策略。
+    """
+    outcome = retry_state.outcome
+    if outcome is None:
+        return wait_exponential_jitter(initial=0.5, max=5.0)(retry_state)
+
+    exc = outcome.exception()
+    if isinstance(exc, HTTPStatusError) and exc.code == 429:
+        return wait_fixed(0)(retry_state)
+
+    return wait_exponential_jitter(initial=0.5, max=5.0)(retry_state)
 
 
 def with_limit_and_retry(func):
-    """为客户端方法应用限流与重试。"""
+    """为客户端方法应用限流与重试，并包含全局冷却逻辑。"""
 
     @wraps(func)
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential_jitter(initial=0.5, max=3.0),
-        retry=retry_if_exception_type((
-            asyncio.TimeoutError,
-            ConnectionError,
-            OSError,
-            HTTPStatusError,
-            TiebaServerError,
-        )),
-        reraise=True,
-    )
-    async def wrapper(self, *args, **kwargs):
-        async with self.rate_limiter():
-            ret = await func(self, *args, **kwargs)
-            err = getattr(ret, "err", None)
-            if err:
-                raise err
-            return ret
+    async def wrapper(self: Client, *args, **kwargs):
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(5),
+            wait=_wait_after_error,
+            retry=retry_if_exception_type((
+                asyncio.TimeoutError,
+                ConnectionError,
+                OSError,
+                HTTPStatusError,
+                TiebaServerError,
+            )),
+            reraise=True,
+        ):
+            with attempt:
+                try:
+                    async with self.rate_limiter():
+                        ret = await func(self, *args, **kwargs)
+                        err = getattr(ret, "err", None)
+                        if err:
+                            raise err
+                        return ret
+                except HTTPStatusError as e:
+                    if e.code == 429:
+                        wait_seconds = self._cooldown_seconds_429
+                        logger.warning(
+                            "Received HTTP 429. Activating global cooldown for %.1f seconds.",
+                            wait_seconds,
+                        )
+                        await self.set_cooldown(wait_seconds)
+                        await asyncio.sleep(wait_seconds)
+
+                    raise
 
     return wrapper
 
@@ -54,18 +94,35 @@ class Client(tb.Client):
         semaphore (asyncio.Semaphore): 用于控制最大并发数的信号量。
     """
 
-    def __init__(self, *args, limiter: AsyncLimiter, semaphore: asyncio.Semaphore, **kwargs):
+    def __init__(
+        self,
+        *args,
+        limiter: AsyncLimiter,
+        semaphore: asyncio.Semaphore,
+        cooldown_seconds_429: float,
+        **kwargs,
+    ):
         """初始化扩展的aiotieba客户端。
 
         Args:
             *args: 传递给父类构造函数的参数。
             limiter: 速率限制器，用于控制每秒请求数。
             semaphore: 信号量，用于控制最大并发数。
+            cooldown_seconds: 触发429时的全局冷却秒数。
             **kwargs: 传递给父类构造函数的关键字参数。
         """
         super().__init__(*args, **kwargs)
         self._limiter = limiter
         self._semaphore = semaphore
+        self._cooldown_seconds_429 = cooldown_seconds_429
+        self._cooldown_until: float = 0.0
+        self._cooldown_lock = asyncio.Lock()
+
+    async def set_cooldown(self, duration: float):
+        """设置全局冷却时间，防止多个任务同时设置。"""
+        async with self._cooldown_lock:
+            cooldown_end_time = time.monotonic() + duration
+            self._cooldown_until = max(self._cooldown_until, cooldown_end_time)
 
     @property
     def limiter(self) -> AsyncLimiter:
@@ -79,14 +136,13 @@ class Client(tb.Client):
 
     @asynccontextmanager
     async def rate_limiter(self) -> AsyncGenerator[None, None]:
-        """获取速率限制和并发控制的上下文管理器。
+        """获取速率限制和并发控制的上下文管理器，并处理全局冷却。"""
+        now = time.monotonic()
+        if now < self._cooldown_until:
+            wait_time = self._cooldown_until - now
+            logger.debug("Global cooldown active. Waiting for %.1f seconds.", wait_time)
+            await asyncio.sleep(wait_time)
 
-        该方法确保所有aiotieba请求都受到速率限制和并发控制的约束。
-        首先获取速率限制器的许可，然后获取信号量的许可。
-
-        Yields:
-            None: 上下文管理器
-        """
         async with self.limiter:
             async with self.semaphore:
                 yield

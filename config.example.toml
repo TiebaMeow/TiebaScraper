@@ -43,10 +43,12 @@ db = 0
 
 # 限流配置
 [rate_limit]
-# 每秒请求数限制
+# 每秒请求数限制，backfill/hybrid 模式请设置更低的值
 rps = 10
 # 并发数限制
 concurrency = 4
+# 遇 HTTP 429 后的全局冷却时间（秒）
+cooldown_seconds_429 = 5.0
 
 # 缓存配置
 [cache]
