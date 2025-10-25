@@ -1,137 +1,117 @@
-import dataclasses
+import asyncio
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import AsyncMock
 
 import pytest
 
+from src.models.models import Thread as ThreadModel
 from src.scraper.tasks import FullScanPostsTask, ScanThreadsTask, Task
 from src.scraper.worker import ThreadsTaskHandler
 
 
-@dataclasses.dataclass
-class _User:
-    user_id: int
-    level: int = 1
-    portrait: str = "p"
-    user_name: str = "u"
-    nick_name: str = "n"
+def make_user(**overrides):
+    defaults = {"user_id": 1, "level": 1, "portrait": "p", "user_name": "u", "nick_name": "n"}
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
 
 
-@dataclasses.dataclass
-class _Thread:
-    tid: int
-    fid: int
-    fname: str
-    last_time: int
-    reply_num: int
-    user: _User
-    title: str = "t"
-    text: str = "tx"
-    create_time: int = 1
-    is_livepost: bool = False
-    contents: Any = dataclasses.field(default_factory=lambda: SimpleNamespace(objs=[]))
+def make_thread(
+    *,
+    tid: int = 1,
+    fid: int = 10,
+    fname: str = "bar",
+    last_time: int = 1,
+    reply_num: int = 1,
+    user: Any | None = None,
+    text: str = "tx",
+):
+    user = user or make_user()
+    contents = SimpleNamespace(text=text, objs=[])
+    return SimpleNamespace(
+        tid=tid,
+        fid=fid,
+        fname=fname,
+        last_time=last_time,
+        reply_num=reply_num,
+        user=user,
+        title="t",
+        text=text,
+        create_time=1,
+        is_livepost=False,
+        contents=contents,
+    )
 
 
-class DummyTBClient:
-    def __init__(self, threads):
-        self._threads = threads
-
-    async def get_threads(self, fname, pn, rn=30, is_good=False):  # noqa: ARG002
-        return SimpleNamespace(objs=list(self._threads), has_more=False)
-
-
-class DummyDatastore:
-    def __init__(self, new_ids: set[int], stored: dict[int, Any] | None = None):
-        self._new = new_ids
-        self._stored = stored or {}
-        self.saved_threads: list[Any] = []
-        self.ids_pushed: list[tuple[str, int]] = []
-
-    async def filter_new_ids(self, item_type, ids):  # noqa: ARG002
-        return self._new
-
-    async def save_items(self, items, upsert: bool = False):  # noqa: ARG002
-        self.saved_threads.extend(items)
-
-    async def get_threads_by_tids(self, tids):
-        return [self._stored[t] for t in tids if t in self._stored]
-
-    async def push_to_id_queue(self, item_type, item_id):
-        self.ids_pushed.append((item_type, int(item_id)))
-
-    async def push_object_event(self, item_type, obj, *args, **kwargs):  # noqa: ARG002
-        return None
-
-
-class DummyContainer:
-    def __init__(self, tb_client):
-        self.tb_client = tb_client
-
-
-class DummyQueue:
-    def __init__(self):
-        self.items: list[Task] = []
-
-    async def put(self, task: Task):
-        self.items.append(task)
-
-
-class _ThreadsHandler(ThreadsTaskHandler):
-    def __init__(self, worker_id, container, datastore, queue):
-        super().__init__(worker_id, container, datastore, queue)
-        self.datastore = cast("Any", datastore)
+def _drain_queue(queue):
+    items: list[Task] = []
+    while not queue.empty():
+        items.append(queue.get_nowait())
+    return items
 
 
 @pytest.mark.asyncio
-async def test_threads_handler_new_threads_schedule_and_push(monkeypatch):
-    threads = [_Thread(tid=1, fid=10, fname="bar", last_time=1, reply_num=1, user=_User(1))]
-    tb = DummyTBClient(threads)
-    ds = DummyDatastore(new_ids={1})
-    q = DummyQueue()
-    h = _ThreadsHandler(
+async def test_threads_handler_new_threads_schedule_and_push():
+    thread = make_thread()
+    threads_response = SimpleNamespace(objs=[thread], has_more=False)
+    tb_client = SimpleNamespace(get_threads=AsyncMock(return_value=threads_response))
+    datastore = SimpleNamespace(
+        filter_new_ids=AsyncMock(return_value={thread.tid}),
+        save_items=AsyncMock(),
+        get_threads_by_tids=AsyncMock(return_value=[]),
+        push_to_id_queue=AsyncMock(),
+        push_object_event=AsyncMock(),
+    )
+    queue: asyncio.PriorityQueue[Task] = asyncio.PriorityQueue()
+    handler = ThreadsTaskHandler(
         worker_id=0,
-        container=cast("Any", DummyContainer(tb)),
-        datastore=cast("Any", ds),
-        queue=cast("Any", q),
+        container=cast("Any", SimpleNamespace(tb_client=tb_client)),
+        datastore=cast("Any", datastore),
+        queue=queue,
     )
 
-    # bypass ensure_users to not call real User model conversion
-    async def _noop(self, items):  # noqa: ANN001, ANN201
-        return None
+    await handler.handle(ScanThreadsTask(fid=thread.fid, fname=thread.fname, pn=1))
 
-    monkeypatch.setattr(_ThreadsHandler, "ensure_users", _noop)
-    task = ScanThreadsTask(fid=10, fname="bar", pn=1)
-    await h.handle(task)
+    thread_save_calls = [
+        call.args[0]
+        for call in datastore.save_items.await_args_list
+        if call.args and isinstance(call.args[0], list) and call.args[0] and isinstance(call.args[0][0], ThreadModel)
+    ]
+    assert thread_save_calls, "Expected thread models to be persisted for new threads"
+    assert thread_save_calls[0][0].tid == thread.tid
 
-    # saved new thread and scheduled full scan
-    assert ds.saved_threads
-    assert any(isinstance(t.content, FullScanPostsTask) for t in q.items)
-    # pushed ID/object for new thread
-    # thread push happens inside handle via datastore methods; our Dummy tracks id pushes
-    # new thread push uses item_type="thread"
-    assert ("thread", 1) in ds.ids_pushed or True  # may be skipped in backfill
+    datastore.push_to_id_queue.assert_awaited_once_with("thread", thread.tid)
+    datastore.push_object_event.assert_awaited_once_with("thread", thread)
+
+    queued_tasks = _drain_queue(queue)
+    assert any(isinstance(item.content, FullScanPostsTask) for item in queued_tasks)
 
 
 @pytest.mark.asyncio
-async def test_threads_handler_backfill_enqueues_next_page_when_has_more_false(monkeypatch):
-    # even when has_more False, code checks and won't enqueue next page; ensure no explosion
-    threads = [_Thread(tid=1, fid=10, fname="bar", last_time=1, reply_num=1, user=_User(1))]
-    tb = DummyTBClient(threads)
-    ds = DummyDatastore(new_ids={1})
-    q = DummyQueue()
-    h = _ThreadsHandler(
+async def test_threads_handler_backfill_enqueues_next_page_when_has_more_false():
+    thread = make_thread()
+    threads_response = SimpleNamespace(objs=[thread], has_more=False)
+    tb_client = SimpleNamespace(get_threads=AsyncMock(return_value=threads_response))
+    datastore = SimpleNamespace(
+        filter_new_ids=AsyncMock(return_value={thread.tid}),
+        save_items=AsyncMock(),
+        get_threads_by_tids=AsyncMock(return_value=[]),
+        push_to_id_queue=AsyncMock(),
+        push_object_event=AsyncMock(),
+    )
+    queue: asyncio.PriorityQueue[Task] = asyncio.PriorityQueue()
+    handler = ThreadsTaskHandler(
         worker_id=0,
-        container=cast("Any", DummyContainer(tb)),
-        datastore=cast("Any", ds),
-        queue=cast("Any", q),
+        container=cast("Any", SimpleNamespace(tb_client=tb_client)),
+        datastore=cast("Any", datastore),
+        queue=queue,
     )
 
-    async def _noop(self, items):  # noqa: ANN001, ANN201
-        return None
+    await handler.handle(ScanThreadsTask(fid=thread.fid, fname=thread.fname, pn=1, backfill=True, max_pages=2))
 
-    monkeypatch.setattr(_ThreadsHandler, "ensure_users", _noop)
-    task = ScanThreadsTask(fid=10, fname="bar", pn=1, backfill=True, max_pages=2)
-    await h.handle(task)
+    datastore.push_to_id_queue.assert_not_called()
+    datastore.push_object_event.assert_not_called()
 
-    # no next page because has_more False, but still scheduled full scan
-    assert any(isinstance(t.content, FullScanPostsTask) for t in q.items)
+    queued_tasks = _drain_queue(queue)
+    assert any(isinstance(item.content, FullScanPostsTask) and item.content.backfill for item in queued_tasks)
+    assert not any(isinstance(item.content, ScanThreadsTask) and item.content.pn == 2 for item in queued_tasks)
