@@ -15,7 +15,7 @@ WORKDIR /app
 
 COPY pyproject.toml ./
 
-RUN uv sync --system
+RUN uv pip install --system --requirements pyproject.toml
 
 COPY src ./src
 COPY main.py ./
