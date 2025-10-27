@@ -1,0 +1,25 @@
+# Exclude version control, configs with secrets, development artifacts
+.git
+.github
+.vscode
+.idea
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.pytest_cache
+.venv
+.env
+.DS_Store
+build/
+dist/
+htmlcov/
+coverage/
+.mypy_cache/
+.pytest_cache/
+uv.lock
+config.toml
+docker-compose.override.yml
+tests/
+examples/
+

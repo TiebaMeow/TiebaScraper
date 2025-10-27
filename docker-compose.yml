@@ -1,0 +1,52 @@
+version: "3.9"
+
+services:
+  app:
+    image: tiebameow/tiebascraper:latest
+    container_name: tiebascraper_app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./config.docker.toml:/app/config.toml:ro
+    # ports:
+    #   - "8000:8000"  # WebSocket 服务端口映射
+    command: ["--mode", "periodic"]
+    restart: unless-stopped
+
+  postgres:
+    image: tiebameow/tiebascraper-postgres:latest
+    container_name: tiebascraper_postgres
+    environment:
+      POSTGRES_DB: tieba_data
+      POSTGRES_USER: tiebascraper
+      POSTGRES_PASSWORD: tiebascraper
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7
+    container_name: tiebascraper_redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  redis_data:

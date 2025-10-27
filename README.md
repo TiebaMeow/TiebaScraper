@@ -47,7 +47,7 @@ uv sync
     # Linux / macOS
     cp config.example.toml config.toml
     # Windows (PowerShell)
-    copy config.example.toml config.toml
+    Copy-Item config.example.toml config.toml
     ```
 
 2. 编辑 `config.toml` 文件，根据注释填写相应的配置项
@@ -179,6 +179,58 @@ TiebaMeow 提供了一个基于 NoneBot2 的 QQ 机器人 [TiebaManageBot](https
         "fname": "贴吧名"
     }
     ```
+
+## Docker 部署
+
+### 使用 docker-compose
+
+1. **准备配置文件**:
+
+    复制 Docker 环境配置文件模板：
+
+    ```bash
+    # Linux / macOS
+    cp config.docker.example.toml config.toml
+    # Windows (PowerShell)
+    Copy-Item config.docker.example.toml config.toml
+    ```
+
+    然后，根据你的需求编辑 `config.toml` 文件。**请注意**，在 Docker 环境中，应用容器需要通过服务名（`postgres` 和 `redis`）来访问数据库和 Redis，因此请确保主机名配置正确。`config.docker.example.toml` 已预设了正确的主机名。
+
+2. **启动服务**:
+
+    在项目根目录下运行以下命令：
+
+    ```bash
+    docker compose up -d
+    ```
+
+    该命令会从 Docker Hub 拉取 `tiebameow/tiebascraper` 和 `tiebameow/tiebascraper-postgres` 镜像，并启动应用、PostgreSQL（已预装 `pg_partman`）和 Redis 服务。
+
+3. **查看日志**:
+
+    ```bash
+    docker compose logs -f app
+    ```
+
+4. **切换运行模式**:
+
+    默认情况下，应用以 `periodic`（实时监控）模式运行。如果你需要切换模式，可以运行以下命令：
+
+    ```bash
+    docker compose run --rm app --mode backfill
+    ```
+
+5. **停止服务**:
+
+    ```bash
+    docker compose down
+    ```
+
+### 其他注意事项
+
+- 可以根据需要使用已有的 PostgreSQL 和 Redis 实例，修改 `config.toml` 中的连接信息并删除 `docker-compose.yml` 中对应的服务定义即可。
+- 若需外部访问 WebSocket，请在配置中将 `websocket.host` 设置为 `0.0.0.0` 并在 `docker-compose.yml` 中映射端口。
 
 ## 项目结构
 
