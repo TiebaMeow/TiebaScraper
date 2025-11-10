@@ -360,6 +360,7 @@ class Post(MixinBase, AiotiebaConvertible):
     scrape_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_with_tz)
 
     tid: Mapped[int] = mapped_column(BIGINT, index=True)
+    fid: Mapped[int] = mapped_column(BIGINT, index=True)
     author_id: Mapped[int] = mapped_column(BIGINT, index=True)
 
     thread: Mapped[Thread] = relationship(
@@ -398,6 +399,7 @@ class Post(MixinBase, AiotiebaConvertible):
             author_level=post.user.level,
             scrape_time=now_with_tz(),
             tid=post.tid,
+            fid=post.fid,
             author_id=post.user.user_id,
         )
 
@@ -434,6 +436,8 @@ class Comment(MixinBase, AiotiebaConvertible):
     scrape_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_with_tz)
 
     pid: Mapped[int] = mapped_column(BIGINT, index=True)
+    tid: Mapped[int] = mapped_column(BIGINT, primary_key=True)
+    fid: Mapped[int] = mapped_column(BIGINT, index=True)
     author_id: Mapped[int] = mapped_column(BIGINT, index=True)
 
     post: Mapped[Post] = relationship(
@@ -466,5 +470,7 @@ class Comment(MixinBase, AiotiebaConvertible):
             reply_to_id=comment.reply_to_id or None,
             scrape_time=now_with_tz(),
             pid=comment.ppid,
+            tid=comment.tid,
+            fid=comment.fid,
             author_id=comment.user.user_id,
         )
