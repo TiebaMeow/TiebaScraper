@@ -28,7 +28,7 @@ _基于 aiotieba 的高性能百度贴吧异步爬虫工具，支持实时监控
 
 - [uv](https://docs.astral.sh/uv/)
 - [PostgreSQL](https://www.postgresql.org/) 14+
-- （可选）[pg_partman](https://github.com/pgpartman/pg_partman) 5.2.4
+- （可选）[TimescaleDB](https://github.com/timescale/timescaledb)
 - （可选）[Redis](https://redis.io/) 6.0+
 
 ## 安装依赖
@@ -69,7 +69,7 @@ uv sync
 
 如果你的数据量不大（单表量级在百万行以下），可以不启用分区。请注意，我们将爬取到的所有数据存到了 `thread`、`post`、`comment` 三张表中。
 
-如果你希望对数据进行分区存储，以避免单表数据量过大，可以使用 `pg_partman` 插件来管理 PostgreSQL 数据库中的分区表。
+如果你希望对数据进行分区存储，以避免单表数据量过大，可以使用 `TimescaleDB` 扩展来管理 PostgreSQL 数据库中的分区表。
 
 首先，请确保配置文件中的 `partition_enabled` 选项设置为 `true`：
 
@@ -77,29 +77,9 @@ uv sync
 partition_enabled = true
 ```
 
-并根据你的数据量合理设置 p_interval 和 p_premake 的值，以确保单个分区不会太大，以及默认分区不会有太多数据。
+并根据你的数据量合理设置 p_interval 的值（如 "1 month"），以确保单个分区不会太大。
 
-然后请确保 PostgreSQL 数据库与 `pg_partman` 插件已安装。Linux 用户可以参考 `pg_partman` 官方文档，使用 `make install` 命令安装插件。Windows 用户可以使用 WSL 或 Docker，如果一定要使用 Windows 原生 PostgreSQL，请参考以下步骤：
-
-> 1. 安装 [MSYS2](https://www.msys2.org/) 或类似环境
-> 2. clone `pg_partman` 仓库到本地
-> 3. 在 `pg_partman` 目录下创建并执行以下脚本：
->
->     ```bash
->     #!/bin/bash
->     EXTENSION=pg_partman
->     VERSION=$(grep default_version $EXTENSION.control | \
->             sed -e "s/default_version[[:space:]]*=[[:space:]]*'\([^']*\)'/\1/")
-> 
->     cat sql/types/*.sql > "${EXTENSION}--${VERSION}.sql"
->     cat sql/tables/*.sql >> "${EXTENSION}--${VERSION}.sql"
->     cat sql/functions/*.sql >> "${EXTENSION}--${VERSION}.sql"
->     cat sql/procedures/*.sql >> "${EXTENSION}--${VERSION}.sql"
->     ```
->
->     你也可以将上面的脚本使用 AI 翻译为 PowerShell 脚本，这样就无需 MSYS2 等类Unix环境。
->
-> 4. 将生成的 `pg_partman--<version>.sql` 和 `pg_partman.control` 文件复制到 `C:\Program Files\PostgreSQL\<version>\share\extension` 目录下
+然后请确保 PostgreSQL 数据库已安装 `TimescaleDB` 扩展。可以参考[官方文档](https://www.tigerdata.com/docs/self-hosted/latest/install)进行安装，推荐直接使用官方 Docker 镜像 `timescale/timescaledb:latest-pg17`。
 
 ## 使用方法
 
@@ -115,8 +95,6 @@ partition_enabled = true
 uv run python main.py
 ```
 
-如果你开启了分区，实时监控模式将会自动定期维护分区，为默认分区（未命中当前分区时间范围的数据）中的数据创建合适的分区，并将其迁移到相应的分区中。
-
 #### 历史数据回溯模式
 
 历史数据回溯模式下，程序将根据用户定义的深度抓取指定贴吧的历史数据。
@@ -125,16 +103,6 @@ uv run python main.py
 uv run python main.py --mode backfill
 ```
 
-如果你开启了分区，在历史数据回溯模式下，你需要手动维护分区：
-
-```sql
-CALL partman.partition_data_proc('public.{table}');
-CALL partman.run_maintenance_proc();
-VACUUM ANALYZE public.{table};
-```
-
-将 `{table}` 替换为 `thread`, `post`, `comment` 分别执行。
-
 #### 混合模式
 
 混合模式下，程序将同时运行实时监控和历史数据回溯。混合模式的历史数据回溯任务将从第2页开始抓取。
@@ -142,8 +110,6 @@ VACUUM ANALYZE public.{table};
 ```bash
 uv run python main.py --mode hybrid
 ```
-
-如果你开启了分区，混合模式下，程序也将自动定期维护分区。
 
 ### 内容审查
 
@@ -205,7 +171,7 @@ TiebaMeow 提供了一个基于 NoneBot2 的 QQ 机器人 [TiebaManageBot](https
     docker compose up -d
     ```
 
-    该命令会从 Docker Hub 拉取 `tiebameow/tiebascraper` 和 `tiebameow/tiebascraper-postgres` 镜像，并启动应用、PostgreSQL（已预装 `pg_partman`）和 Redis 服务。
+    该命令会从 Docker Hub 拉取 `tiebameow/tiebascraper` 和 `timescale/timescaledb:latest-pg17` 镜像，并启动应用、PostgreSQL（已预装 `TimescaleDB`）和 Redis 服务。
 
 3. **查看日志**:
 

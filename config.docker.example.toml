@@ -25,8 +25,6 @@ db_name = "tieba_data"
 partition_enabled = true
 # 分区间隔
 p_interval = "1 month"
-# 分区预创建数量
-p_premake = 4
 
 # Redis 连接信息
 # 请与 docker-compose.yml 配置保持一致
@@ -68,10 +66,6 @@ ttl_seconds = 86400
 interval_seconds = 60
 # 每 N 个周期投递一次精华贴首页任务
 good_page_every_n_ticks = 10
-# 每 N 个周期投递一次分区维护任务（仅开启分区时生效）
-maintenance_every_n_ticks = 10
-# 是否启用分区维护任务（仅开启分区时生效）
-maintenance_enabled = true
 
 # WebSocket 服务配置
 # 用于动态添加/删除监控贴吧和向客户端推送事件

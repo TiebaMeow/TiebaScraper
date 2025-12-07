@@ -22,7 +22,7 @@ class Priority(IntEnum):
 
     HIGH = 1  # ScanThreads, IncrementalScanPosts
     MEDIUM = 2  # FullScanPosts, IncrementalScanComments
-    LOW = 3  # FullScanComments, PartmanMaintenanceTask
+    LOW = 3  # FullScanComments
     BACKFILL = 4  # BackfillTasks
 
 
@@ -43,7 +43,6 @@ class Task:
         | FullScanCommentsTask
         | IncrementalScanCommentsTask
         | DeepScanTask
-        | PartmanMaintenanceTask
     ) = dataclasses.field(compare=False)
 
 
@@ -143,8 +142,3 @@ class DeepScanTask:
     tid: int
     pid: int
     depth: int = 10
-
-
-@dataclasses.dataclass(slots=True, frozen=True)
-class PartmanMaintenanceTask:
-    """触发数据库分区维护的任务。"""

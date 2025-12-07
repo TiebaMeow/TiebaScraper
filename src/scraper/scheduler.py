@@ -14,7 +14,7 @@ import logging
 from asyncio import PriorityQueue
 from typing import TYPE_CHECKING, Literal
 
-from .tasks import PartmanMaintenanceTask, Priority, ScanThreadsTask, Task
+from .tasks import Priority, ScanThreadsTask, Task
 
 if TYPE_CHECKING:
     from ..core import Container
@@ -59,8 +59,6 @@ class Scheduler:
         forums = self.container.forums or []
         interval = self.container.config.scheduler_interval_seconds
         good_every = self.container.config.good_page_every_ticks
-        maint_enabled = self.container.config.maintenance_enabled and self.container.config.partition_enabled
-        maint_every = self.container.config.maintenance_every_ticks
 
         if not forums:
             self.log.warning("No forums configured in tieba.forums. Scheduler will be idle.")
@@ -79,10 +77,6 @@ class Scheduler:
                 f"{[forum.fname for forum in forums]}"
             )
             await self._schedule_homepage_scans(forums, is_good=False)
-
-            # 每 N 个周期维护一次分区
-            if maint_enabled and tick % maint_every == 0:
-                await self._schedule_partman_maintenance()
 
             # 每 N 个周期扫描一次精华贴首页
             if tick % good_every == 0:
@@ -108,14 +102,6 @@ class Scheduler:
             await self._schedule_backfill_homepage(forum, max_pages, is_good=True)
 
         self.log.info("Backfill homepage tasks scheduled. Scheduler is exiting.")
-
-    async def _schedule_partman_maintenance(self):
-        """调度一次 pg_partman 分区维护任务。"""
-        if not self.container.config.partition_enabled:
-            return
-        task = Task(priority=Priority.LOW, content=PartmanMaintenanceTask())
-        await self.queue.put(task)
-        self.log.debug("Scheduled PartmanMaintenanceTask with priority=LOW")
 
     async def _schedule_homepage_scans(self, forums: list[Forum], *, is_good: bool = False):
         """调度首页扫描任务（周期模式）。

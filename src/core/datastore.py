@@ -8,12 +8,11 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from time import perf_counter
 from typing import TYPE_CHECKING, ClassVar, Literal
 
 import aiotieba.typing as aiotieba
 from cashews import Cache, add_prefix
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 
@@ -330,33 +329,3 @@ class DataStore:
 
         envelope: EventEnvelope = build_envelope(item_type, obj, event_type=event_type, backfill=backfill)
         await self.publisher.publish_object(envelope)
-
-    async def run_partition_maintenance(self) -> None:
-        """执行 pg_partman 的默认分区数据回填与维护过程。
-
-        为避免 partition_data_proc 的临时表字段冲突，每个表的回填使用独立连接。
-        """
-        if not self.container.config.partition_enabled:
-            log.debug("Partition disabled; skip run_partition_maintenance().")
-            return
-        start = perf_counter()
-
-        try:
-            tables = ["thread", "post", "comment"]
-
-            for table in tables:
-                async with self.container.db_engine.connect() as conn:  # type: ignore
-                    ac_conn = await conn.execution_options(isolation_level="AUTOCOMMIT")
-                    await ac_conn.execute(text(f"CALL partman.partition_data_proc('public.{table}');"))
-                    await ac_conn.execute(text(f"VACUUM ANALYZE {table};"))
-
-            async with self.container.db_engine.connect() as conn:  # type: ignore
-                ac_conn = await conn.execution_options(isolation_level="AUTOCOMMIT")
-                await ac_conn.execute(text("CALL partman.run_maintenance_proc();"))
-
-        except Exception as e:
-            log.error(f"Partition maintenance failed: {e}")
-            raise
-
-        elapsed = perf_counter() - start
-        log.info(f"Partition maintenance finished in {elapsed:.2f}s")

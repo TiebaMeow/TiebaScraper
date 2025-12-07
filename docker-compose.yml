@@ -17,8 +17,8 @@ services:
     restart: unless-stopped
 
   postgres:
-    image: tiebameow/tiebascraper-postgres:latest
-    container_name: tiebascraper_postgres
+    image: timescale/timescaledb:latest-pg17
+    container_name: tiebascraper_timescaledb
     environment:
       POSTGRES_DB: tieba_data
       POSTGRES_USER: tiebascraper

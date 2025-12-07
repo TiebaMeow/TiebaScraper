@@ -4,23 +4,15 @@ from dataclasses import dataclass
 import pytest
 
 from src.scraper.scheduler import Scheduler
-from src.scraper.tasks import PartmanMaintenanceTask, Priority, ScanThreadsTask, Task
+from src.scraper.tasks import Priority, ScanThreadsTask, Task
 
 
 @dataclass
 class DummyConfig:
     scheduler_interval_seconds: int = 0  # avoid real sleep in tests if invoked
     good_page_every_ticks: int = 2
-    maintenance_every_n_ticks: int = 3
-    maintenance_enabled: bool = True
-    partition_enabled: bool = True
     mode: str = "periodic"
     max_backfill_pages: int = 5
-
-    # Scheduler reads maintenance_every_ticks; provide alias for compatibility
-    @property
-    def maintenance_every_ticks(self) -> int:
-        return self.maintenance_every_n_ticks
 
 
 @dataclass
@@ -66,20 +58,18 @@ async def test_scheduler_periodic_enqueues_home_and_good_and_maintenance(monkeyp
     with pytest.raises(asyncio.CancelledError):
         await s._run_periodic()  # type: ignore
 
-    # After one tick, expect: for 2 forums -> 2 homepage, plus good-section 2 homepage, plus maintenance 1
+    # After one tick, expect: for 2 forums -> 2 homepage, plus good-section 2 homepage
     tasks = []
     while not q.empty():
         tasks.append(q.get_nowait())
 
     kinds = [type(t.content) for t in tasks]
     assert kinds.count(ScanThreadsTask) == 4
-    assert any(isinstance(t.content, PartmanMaintenanceTask) for t in tasks)
 
 
 def test_task_priority_ordering():
     t1 = Task(priority=Priority.HIGH, content=ScanThreadsTask(fid=1, fname="x", pn=1))
     t2 = Task(priority=Priority.BACKFILL, content=ScanThreadsTask(fid=1, fname="x", pn=2))
-    t3 = Task(priority=Priority.LOW, content=PartmanMaintenanceTask())
 
-    tasks = sorted([t2, t3, t1])
-    assert [t.priority for t in tasks] == [Priority.HIGH, Priority.LOW, Priority.BACKFILL]
+    tasks = sorted([t2, t1])
+    assert [t.priority for t in tasks] == [Priority.HIGH, Priority.BACKFILL]

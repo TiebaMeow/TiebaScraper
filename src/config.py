@@ -31,7 +31,6 @@ class DatabaseConfig(BaseModel):
     db_name: str = "tieba_data"
     partition_enabled: bool = False
     p_interval: str = "1 month"
-    p_premake: int = 4
 
 
 class RedisConfig(BaseModel):
@@ -72,8 +71,6 @@ class SchedulerConfig(BaseModel):
 
     interval_seconds: int = Field(60, gt=0)
     good_page_every_n_ticks: int = Field(10, gt=0)
-    maintenance_every_n_ticks: int = Field(10, gt=0)
-    maintenance_enabled: bool = True
 
 
 class WebSocketConfig(BaseModel):
@@ -112,9 +109,7 @@ class PydanticConfig(BaseModel):
         default_factory=lambda: CacheConfig(backend="memory", max_size=100000, ttl_seconds=86400)
     )
     scheduler: SchedulerConfig = Field(
-        default_factory=lambda: SchedulerConfig(
-            interval_seconds=60, good_page_every_n_ticks=10, maintenance_every_n_ticks=10
-        )
+        default_factory=lambda: SchedulerConfig(interval_seconds=60, good_page_every_n_ticks=10)
     )
     websocket: WebSocketConfig = Field(
         default_factory=lambda: WebSocketConfig(enabled=True, host="localhost", port=8000)
@@ -216,10 +211,6 @@ class Config:
         return self.pydantic_config.database.p_interval
 
     @property
-    def p_premake(self) -> int:
-        return self.pydantic_config.database.p_premake
-
-    @property
     def partition_enabled(self) -> bool:
         return self.pydantic_config.database.partition_enabled
 
@@ -266,14 +257,6 @@ class Config:
     @property
     def good_page_every_ticks(self) -> int:
         return self.pydantic_config.scheduler.good_page_every_n_ticks
-
-    @property
-    def maintenance_every_ticks(self) -> int:
-        return self.pydantic_config.scheduler.maintenance_every_n_ticks
-
-    @property
-    def maintenance_enabled(self) -> bool:
-        return self.pydantic_config.scheduler.maintenance_enabled
 
     @property
     def websocket_url(self) -> WebsocketUrl:

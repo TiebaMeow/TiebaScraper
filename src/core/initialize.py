@@ -8,16 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 from sqlalchemy import select, text
 
 from ..config import Config
 from ..models import Base, Forum
 from .container import Container
-
-if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncConnection
 
 log = logging.getLogger("initialize")
 
@@ -57,40 +54,6 @@ async def initialize_application(
     return container, task_queue
 
 
-async def _partman_create_parent(
-    conn: AsyncConnection, parent_table: str, interval: str = "1 month", premake: int = 4
-) -> None:
-    res = await conn.execute(
-        text("SELECT 1 FROM partman.part_config WHERE parent_table = :pt LIMIT 1"),
-        {"pt": parent_table},
-    )
-    already_managed = res.first() is not None
-    if already_managed:
-        return
-    try:
-        result = await conn.execute(
-            text(
-                """
-                SELECT partman.create_parent(
-                    p_parent_table := :p_parent_table,
-                    p_control      := 'create_time',
-                    p_interval     := :p_interval,
-                    p_premake      := :p_premake
-                );
-                """
-            ),
-            {"p_parent_table": parent_table, "p_interval": interval, "p_premake": premake},
-        )
-        if result.rowcount == 0:
-            raise RuntimeError(f"Failed to register {parent_table} to pg_partman.")
-
-    except Exception as e:
-        log.error(f"Error creating partition for {parent_table}: {e}")
-        raise RuntimeError(f"Failed to register {parent_table} to pg_partman.") from e
-
-    log.info(f"Registered {parent_table} to pg_partman (interval={interval}, premake={premake}).")
-
-
 async def create_tables(container: Container) -> None:
     """创建数据库表。
 
@@ -108,15 +71,20 @@ async def create_tables(container: Container) -> None:
         async with container.db_engine.begin() as conn:  # type: ignore
             await conn.run_sync(Base.metadata.create_all)
             if container.config.partition_enabled:
-                await conn.execute(text("CREATE SCHEMA IF NOT EXISTS partman;"))
-                await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_partman WITH SCHEMA partman;"))
+                await conn.execute(text("CREATE EXTENSION IF NOT EXISTS timescaledb;"))
                 for table in ("thread", "post", "comment"):
-                    await _partman_create_parent(
-                        conn,
-                        f"public.{table}",
-                        interval=container.config.p_interval,
-                        premake=container.config.p_premake,
-                    )
+                    try:
+                        await conn.execute(
+                            text(
+                                f"SELECT create_hypertable('public.{table}', 'create_time', "
+                                f"chunk_time_interval => INTERVAL '{container.config.p_interval}', "
+                                "if_not_exists => TRUE);"
+                            )
+                        )
+                        log.info(f"Converted {table} to hypertable.")
+                    except Exception as e:
+                        log.error(f"Failed to convert {table} to hypertable: {e}")
+                        raise
 
     except Exception as e:
         log.error(f"Failed to create database tables: {e}")
