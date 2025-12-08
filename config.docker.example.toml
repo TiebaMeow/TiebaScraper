@@ -20,7 +20,7 @@ username = "tiebascraper"
 password = "tiebascraper"
 # 数据库名称
 db_name = "tieba_data"
-# 是否启用 PostgreSQL 分区（pg_partman）
+# 是否启用 PostgreSQL 分区（TimescaleDB）
 # Docker Compose 环境下默认启用
 partition_enabled = true
 # 分区间隔

@@ -20,7 +20,7 @@ username = "admin"
 password = "123456"
 # 数据库名称
 db_name = "tieba_data"
-# 是否启用 PostgreSQL 分区（pg_partman），默认不启用
+# 是否启用 PostgreSQL 分区（TimescaleDB），默认不启用
 partition_enabled = false
 # 分区间隔
 p_interval = "1 month"
