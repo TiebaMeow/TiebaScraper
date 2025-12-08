@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import BIGINT, DateTime, Index, Integer, String, Text
-from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, foreign, mapped_column, relationship
 
 from ..schemas import FRAG_MAP, Fragment, FragUnknownModel
@@ -212,7 +212,7 @@ class Thread(MixinBase, AiotiebaConvertible):
         title: 主题贴标题内容。
         text: 主题贴的纯文本内容。
         contents: 正文内容碎片列表，以JSONB格式存储。
-        last_time: 最后回复时间，以秒为单位的10位时间戳。
+        last_time: 最后回复时间，带时区信息。
         reply_num: 回复数。
         author_level: 作者在主题贴所在吧的等级。
         scrape_time: 数据抓取时间。
@@ -232,11 +232,11 @@ class Thread(MixinBase, AiotiebaConvertible):
     )
 
     tid: Mapped[int] = mapped_column(BIGINT, primary_key=True)
-    create_time: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), primary_key=True)
+    create_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
     title: Mapped[str] = mapped_column(String(255))
     text: Mapped[str] = mapped_column(Text)
     contents: Mapped[list[Fragment] | None] = mapped_column(JSONB, nullable=True)
-    last_time: Mapped[int] = mapped_column(BIGINT)
+    last_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     reply_num: Mapped[int] = mapped_column(Integer)
     author_level: Mapped[int] = mapped_column(Integer)
     scrape_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_with_tz)
@@ -276,7 +276,7 @@ class Thread(MixinBase, AiotiebaConvertible):
             title=thread.title,
             text=thread.contents.text,
             contents=cls.convert_content_list(thread.contents.objs),
-            last_time=thread.last_time,
+            last_time=datetime.fromtimestamp(thread.last_time, tz=SHANGHAI_TZ),
             reply_num=thread.reply_num,
             author_level=thread.user.level,
             scrape_time=now_with_tz(),
@@ -311,7 +311,7 @@ class Post(MixinBase, AiotiebaConvertible):
     )
 
     pid: Mapped[int] = mapped_column(BIGINT, primary_key=True)
-    create_time: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), primary_key=True)
+    create_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
     text: Mapped[str] = mapped_column(Text)
     contents: Mapped[list[Fragment] | None] = mapped_column(JSONB, nullable=True)
     floor: Mapped[int] = mapped_column(Integer)
@@ -388,7 +388,7 @@ class Comment(MixinBase, AiotiebaConvertible):
     )
 
     cid: Mapped[int] = mapped_column(BIGINT, primary_key=True)
-    create_time: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), primary_key=True)
+    create_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
     text: Mapped[str] = mapped_column(Text)
     contents: Mapped[list[Fragment] | None] = mapped_column(JSONB, nullable=True)
     author_level: Mapped[int] = mapped_column(Integer)
