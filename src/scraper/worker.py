@@ -206,7 +206,7 @@ class ThreadsTaskHandler(TaskHandler):
 
         for thread_data in old_threads:
             stored_thread = stored_threads_map.get(thread_data.tid)
-            if stored_thread and thread_data.last_time > stored_thread.last_time:
+            if stored_thread and thread_data.last_time > stored_thread.last_time.timestamp():
                 self.log.debug(
                     f"Thread tid={thread_data.tid} has updates. "
                     f"Reply count: {stored_thread.reply_num} -> {thread_data.reply_num}"

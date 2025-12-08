@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, get_args
 
 from pydantic import BaseModel, field_validator
 
@@ -159,6 +159,7 @@ class FragUnknownModel(BaseModel):
     """未知碎片模型。"""
 
     type: Literal["unknown"] = "unknown"
+    raw_data: str = ""
 
 
 Fragment = (
@@ -175,14 +176,7 @@ Fragment = (
 )
 
 FRAG_MAP: dict[str, type[Fragment]] = {
-    "FragText": FragTextModel,
-    "FragAt": FragAtModel,
-    "FragEmoji": FragEmojiModel,
-    "FragImage": FragImageModel,
-    "FragItem": FragItemModel,
-    "FragLink": FragLinkModel,
-    "FragTiebaPlus": FragTiebaPlusModel,
-    "FragVideo": FragVideoModel,
-    "FragVoice": FragVoiceModel,
-    "FragUnknown": FragUnknownModel,
+    key: cls
+    for cls in get_args(Fragment)
+    for key in (cls.__name__.removesuffix("Model"), cls.model_fields["type"].default)
 }

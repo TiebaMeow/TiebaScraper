@@ -12,13 +12,18 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import BIGINT, DateTime, Index, Integer, String, Text
+from pydantic import TypeAdapter, ValidationError
+from sqlalchemy import BIGINT, JSON, DateTime, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.mutable import MutableList
 from sqlalchemy.orm import DeclarativeBase, Mapped, foreign, mapped_column, relationship
+from sqlalchemy.types import TypeDecorator
 
 from ..schemas import FRAG_MAP, Fragment, FragUnknownModel
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     import aiotieba.api.get_posts._classdef as aiotieba_posts
     import aiotieba.typing as aiotieba
 
@@ -54,6 +59,49 @@ def now_with_tz():
     return datetime.now(SHANGHAI_TZ)
 
 
+class FragmentListType(TypeDecorator):
+    """自动处理Fragment模型列表的JSON序列化与反序列化。
+
+    自动适配不同数据库的JSON类型。
+    """
+
+    impl = JSON
+    cache_ok = True
+
+    def __init__(self, fallback: Callable[[], Fragment] | None = None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.adapter = TypeAdapter(Fragment)
+        self.fallback = fallback
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(JSONB())
+        return dialect.type_descriptor(JSON())
+
+    def process_bind_param(self, value: list[Fragment] | None, dialect) -> list[dict[str, Any]] | None:
+        if value is None:
+            return None
+        return [self.adapter.dump_python(item, mode="json") for item in value]
+
+    def process_result_value(self, value: list[dict[str, Any]] | None, dialect) -> list[Fragment] | None:
+        if value is None:
+            return None
+        return [self._validate(item) for item in value]
+
+    def _validate(self, item: dict[str, Any]) -> Fragment:
+        if "type" in item:
+            if model_cls := FRAG_MAP.get(item["type"]):
+                return model_cls.model_construct(**item)
+
+        try:
+            return self.adapter.validate_python(item)
+        except ValidationError:
+            log.warning(f"Failed to parse item: {item}")
+            if self.fallback:
+                return self.fallback()
+            raise
+
+
 class MixinBase(Base):
     """为SQLAlchemy模型提供通用方法的混入类。"""
 
@@ -70,10 +118,7 @@ class MixinBase(Base):
         result = {}
         for c in self.__table__.columns:
             value = getattr(self, c.name)
-            if c.name == "contents" and value is not None:
-                result[c.name] = [frag.model_dump() for frag in value]
-            else:
-                result[c.name] = value
+            result[c.name] = value
         return result
 
 
@@ -88,7 +133,7 @@ class AiotiebaConvertible:
 
         此方法会自动处理_t, _p, _c等后缀，
         通过反射动态构建目标模型名称并在当前模块的全局命名空间中选择相应的模型类。
-        如果遇到不支持的类型，会使用FragTextModel作为默认类型。
+        如果遇到不支持的类型，会使用FragUnknownModel作为默认类型。
 
         Args:
             obj: aiotieba返回的对象。
@@ -106,7 +151,7 @@ class AiotiebaConvertible:
                 f"Unsupported fragment base type: '{target_model_name}' (from '{source_type_name}'), "
                 f"using FragUnknownModel as default type."
             )
-            return FragUnknownModel()
+            return FragUnknownModel(raw_data=repr(obj))
 
         data_dict = dataclasses.asdict(obj)
         return target_model(**data_dict)
@@ -235,7 +280,9 @@ class Thread(MixinBase, AiotiebaConvertible):
     create_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
     title: Mapped[str] = mapped_column(String(255))
     text: Mapped[str] = mapped_column(Text)
-    contents: Mapped[list[Fragment] | None] = mapped_column(JSONB, nullable=True)
+    contents: Mapped[list[Fragment] | None] = mapped_column(
+        MutableList.as_mutable(FragmentListType(fallback=FragUnknownModel)), nullable=True
+    )
     last_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     reply_num: Mapped[int] = mapped_column(Integer)
     author_level: Mapped[int] = mapped_column(Integer)
@@ -313,7 +360,9 @@ class Post(MixinBase, AiotiebaConvertible):
     pid: Mapped[int] = mapped_column(BIGINT, primary_key=True)
     create_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
     text: Mapped[str] = mapped_column(Text)
-    contents: Mapped[list[Fragment] | None] = mapped_column(JSONB, nullable=True)
+    contents: Mapped[list[Fragment] | None] = mapped_column(
+        MutableList.as_mutable(FragmentListType(fallback=FragUnknownModel)), nullable=True
+    )
     floor: Mapped[int] = mapped_column(Integer)
     reply_num: Mapped[int] = mapped_column(Integer)
     author_level: Mapped[int] = mapped_column(Integer)
@@ -390,13 +439,15 @@ class Comment(MixinBase, AiotiebaConvertible):
     cid: Mapped[int] = mapped_column(BIGINT, primary_key=True)
     create_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
     text: Mapped[str] = mapped_column(Text)
-    contents: Mapped[list[Fragment] | None] = mapped_column(JSONB, nullable=True)
+    contents: Mapped[list[Fragment] | None] = mapped_column(
+        MutableList.as_mutable(FragmentListType(fallback=FragUnknownModel)), nullable=True
+    )
     author_level: Mapped[int] = mapped_column(Integer)
     reply_to_id: Mapped[int | None] = mapped_column(BIGINT, nullable=True)
     scrape_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_with_tz)
 
     pid: Mapped[int] = mapped_column(BIGINT, index=True)
-    tid: Mapped[int] = mapped_column(BIGINT, primary_key=True)
+    tid: Mapped[int] = mapped_column(BIGINT, index=True)
     fid: Mapped[int] = mapped_column(BIGINT, index=True)
     author_id: Mapped[int] = mapped_column(BIGINT, index=True)
 
