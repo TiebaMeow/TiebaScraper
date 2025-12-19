@@ -63,6 +63,9 @@ uv sync
     ```sql
     CREATE USER your_username WITH PASSWORD 'your_password';
     GRANT ALL PRIVILEGES ON DATABASE tieba_data TO your_username;
+    \c tieba_data
+    GRANT ALL PRIVILEGES ON SCHEMA public TO your_username;
+    GRANT CREATE ON SCHEMA public TO your_username;
     ```
 
 ### 数据库分区配置（可选）
