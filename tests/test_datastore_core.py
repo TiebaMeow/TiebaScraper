@@ -1,10 +1,11 @@
 import json
-from types import SimpleNamespace
+from datetime import datetime
 from typing import Any, cast
 
 import pytest
+from tiebameow.models.dto import ShareThreadDTO, ThreadDTO, ThreadUserDTO
 
-from src.config import ConsumerConfig
+from src.core.config import ConsumerConfig
 from src.core.datastore import DataStore
 
 
@@ -178,7 +179,47 @@ async def test_push_to_id_and_object_events():
     ds_object = DataStore(cast("Any", container))
     ds_object.cache = cast("Any", DummyCache())
 
-    obj = SimpleNamespace(fid=1, tid=77, pid=0, cid=0)
+    user = ThreadUserDTO(
+        user_id=1,
+        portrait="p",
+        user_name="u",
+        nick_name_new="n",
+        level=1,
+        glevel=1,
+        gender="UNKNOWN",
+        icons=[],
+        is_bawu=False,
+        is_vip=False,
+        is_god=False,
+        priv_like="PUBLIC",
+        priv_reply="ALL",
+    )
+    obj = ThreadDTO(
+        tid=77,
+        fid=1,
+        fname="f",
+        pid=77,
+        author_id=1,
+        author=user,
+        title="t",
+        contents=[],
+        is_good=False,
+        is_top=False,
+        is_share=False,
+        is_hide=False,
+        is_livepost=False,
+        is_help=False,
+        agree_num=0,
+        disagree_num=0,
+        reply_num=0,
+        view_num=0,
+        share_num=0,
+        create_time=datetime.fromtimestamp(0),
+        last_time=datetime.fromtimestamp(0),
+        thread_type=0,
+        tab_id=0,
+        share_origin=ShareThreadDTO(pid=0, tid=0, fid=0, fname="", author_id=0, title="", contents=[]),
+    )
     await ds_object.push_object_event("thread", obj)  # type: ignore[arg-type]
 
     stream_key = f"{container.config.consumer_config.stream_prefix}:1:thread"

@@ -16,10 +16,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
+from tiebameow.utils.logger import logger
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -27,8 +27,6 @@ if TYPE_CHECKING:
     from pydantic import WebsocketUrl
 
     ForumHandler = Callable[[str], Awaitable[bool]]
-
-log = logging.getLogger("ws_server")
 
 
 class WebSocketServer:
@@ -105,7 +103,7 @@ class WebSocketServer:
                             ok = await self._remove_forum_handler(fname)
                         await ws.send_str(json.dumps({"ok": bool(ok), "type": f"{mtype}_ack", "fname": fname}))
                     except Exception as e:
-                        log.exception("%s handler failed: %s", mtype, e)
+                        logger.exception("{} handler failed: {}", mtype, e)
                         await ws.send_str(json.dumps({"ok": False, "error": "internal"}))
                     continue
 
@@ -137,7 +135,7 @@ class WebSocketServer:
             except Exception:
                 self._bound_port = None
             self._started = True
-            log.info("WS server listening on ws://%s:%d%s", self._host, self._port, self._path)
+            logger.info("WS server listening on ws://{}:{}{}", self._host, self._port, self._path)
 
     async def stop(self) -> None:
         for ws in list(self._conns):

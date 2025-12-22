@@ -7,16 +7,14 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from typing import Literal
 
 from sqlalchemy import select, text
+from tiebameow.models.orm import Base, Forum
+from tiebameow.utils.logger import logger
 
-from ..config import Config
-from ..models import Base, Forum
+from .config import Config
 from .container import Container
-
-log = logging.getLogger("initialize")
 
 
 async def initialize_application(
@@ -32,12 +30,12 @@ async def initialize_application(
     5. 创建主任务队列。
 
     Args:
-    mode: 应用程序的运行模式 ("periodic"、"backfill" 或 "hybrid")。
+        mode: 应用程序的运行模式 ("periodic"、"backfill" 或 "hybrid")。
 
     Returns:
         一个元组，包含初始化完成的容器实例和任务队列。
     """
-    log.info(f"Initializing application in '{mode}' mode...")
+    logger.info("Initializing application in '{}' mode...", mode)
 
     app_config = Config(mode=mode)
 
@@ -50,7 +48,7 @@ async def initialize_application(
 
     task_queue = asyncio.PriorityQueue(maxsize=10000)
 
-    log.info("Application initialized successfully.")
+    logger.info("Application initialized successfully.")
     return container, task_queue
 
 
@@ -62,7 +60,7 @@ async def create_tables(container: Container) -> None:
     Args:
         container: 依赖注入容器实例，提供数据库会话工厂。
     """
-    log.info("Initializing database tables...")
+    logger.info("Initializing database tables...")
 
     if not container.tb_client or not container.async_sessionmaker:
         raise RuntimeError("Container is not set up properly.")
@@ -81,16 +79,16 @@ async def create_tables(container: Container) -> None:
                                 "if_not_exists => TRUE);"
                             )
                         )
-                        log.info(f"Converted {table} to hypertable.")
+                        logger.info("Converted {} to hypertable.", table)
                     except Exception as e:
-                        log.error(f"Failed to convert {table} to hypertable: {e}")
+                        logger.exception("Failed to convert {} to hypertable: {}", table, e)
                         raise
 
     except Exception as e:
-        log.error(f"Failed to create database tables: {e}")
+        logger.exception("Failed to create database tables: {}", e)
         raise
 
-    log.info("Database tables created successfully.")
+    logger.info("Database tables created successfully.")
 
 
 async def initialize_forums(container: Container) -> None:
@@ -102,7 +100,7 @@ async def initialize_forums(container: Container) -> None:
     Args:
         container: 依赖注入容器实例。
     """
-    log.info("Initializing forum list...")
+    logger.info("Initializing forum list...")
     if not container.tb_client or not container.async_sessionmaker:
         raise RuntimeError("Container is not set up properly.")
 
@@ -120,12 +118,12 @@ async def initialize_forums(container: Container) -> None:
 
                     fid = await container.tb_client.get_fid(forum_name)
                     if not fid:
-                        log.warning(f"Forum [{forum_name}吧] not found, skipping.")
+                        logger.warning("Forum [{}吧] not found, skipping.", forum_name)
                         continue
                     new_forum = Forum(fid=fid, fname=forum_name)
                     session.add(new_forum)
                     forum_list.append(new_forum)
-                    log.info(f"Added new forum: {forum_name} (fid={fid})")
+                    logger.info("Added new forum: {} (fid={})", forum_name, fid)
 
                 await session.commit()
 
@@ -134,8 +132,8 @@ async def initialize_forums(container: Container) -> None:
                 raise
 
     except Exception as e:
-        log.error(f"Failed to initialize forums: {e}")
+        logger.exception("Failed to initialize forums: {}", e)
         raise
 
     container.forums = forum_list
-    log.info(f"Forums initialized: {[f.fname for f in forum_list]}")
+    logger.info("Forums initialized: {}", [f.fname for f in forum_list])

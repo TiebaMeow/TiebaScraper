@@ -8,6 +8,10 @@ from __future__ import annotations
 
 import dataclasses
 from enum import IntEnum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from datetime import datetime
 
 
 class Priority(IntEnum):
@@ -56,6 +60,8 @@ class ScanThreadsTask:
         pn: 页码
         rn: 每页条目数量，默认为30
         is_good: 是否为精华分区，默认为False
+        backfill: 是否为回溯任务，默认为False
+        max_pages: 最大扫描页数，默认为100
     """
 
     fid: int
@@ -74,6 +80,7 @@ class FullScanPostsTask:
     Attributes:
         tid: 主题贴tid
         rn: 每页条目数量，默认为30
+        backfill: 是否为回溯任务，默认为False
     """
 
     tid: int
@@ -90,10 +97,11 @@ class IncrementalScanPostsTask:
         last_time: 上次扫描的最后回复时间戳
         last_floor: 上次扫描的最后楼层，默认为1
         rn: 每页条目数量，默认为30
+        backfill: 是否为回溯任务，默认为False
     """
 
     tid: int
-    last_time: int
+    last_time: datetime
     last_floor: int = 1
     rn: int = 30
     backfill: bool = False
@@ -106,6 +114,7 @@ class FullScanCommentsTask:
     Attributes:
         tid: 主题贴tid
         pid: 回复pid
+        backfill: 是否为回溯任务，默认为False
     """
 
     tid: int
@@ -120,8 +129,7 @@ class IncrementalScanCommentsTask:
     Attributes:
         tid: 主题贴tid
         pid: 回复pid
-        last_time: 上次扫描的最后回复时间戳
-        last_reply_num: 上次扫描的最后回复数量
+        backfill: 是否为回溯任务，默认为False
     """
 
     tid: int

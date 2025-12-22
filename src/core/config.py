@@ -165,7 +165,7 @@ class Config:
         mode (str): 运行模式('periodic'或'backfill')
     """
 
-    BASE_DIR: ClassVar[Path] = Path(__file__).resolve().parent.parent
+    BASE_DIR: ClassVar[Path] = Path(__file__).resolve().parent.parent.parent
     CONFIG_FILE: ClassVar[Path] = BASE_DIR / "config.toml"
 
     pydantic_config: PydanticConfig

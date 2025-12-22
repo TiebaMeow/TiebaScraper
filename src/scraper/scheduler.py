@@ -10,17 +10,17 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from asyncio import PriorityQueue
 from typing import TYPE_CHECKING, Literal
+
+from tiebameow.utils.logger import logger
 
 from .tasks import Priority, ScanThreadsTask, Task
 
 if TYPE_CHECKING:
-    from ..core import Container
-    from ..models import Forum
+    from tiebameow.models.orm import Forum
 
-log = logging.getLogger("scheduler")
+    from ..core import Container
 
 
 class Scheduler:
@@ -38,7 +38,7 @@ class Scheduler:
     def __init__(self, queue: PriorityQueue, container: Container):
         self.queue = queue
         self.container = container
-        self.log = logging.getLogger("scheduler")
+        self.log = logger.bind(name="Scheduler")
 
     async def run(self, mode: Literal["periodic", "backfill"] = "periodic"):
         """根据不同模式生成任务并放入队列。
@@ -55,53 +55,54 @@ class Scheduler:
 
     async def _run_periodic(self):
         """周期性调度任务生成器。"""
-        self.log.info(f"Starting PERIODIC mode. Interval: {self.container.config.scheduler_interval_seconds}s")
+        logger.info("Starting PERIODIC mode. Interval: {}s", self.container.config.scheduler_interval_seconds)
         forums = self.container.forums or []
         interval = self.container.config.scheduler_interval_seconds
         good_every = self.container.config.good_page_every_ticks
 
         if not forums:
-            self.log.warning("No forums configured in tieba.forums. Scheduler will be idle.")
+            logger.warning("No forums configured in tieba.forums. Scheduler will be idle.")
             return
 
         tick = 0
         while True:
             forums = self.container.forums or []
             if not forums:
-                self.log.warning("No forums configured. Waiting for %d seconds...", interval)
+                logger.warning("No forums configured. Waiting for {} seconds...", interval)
                 await asyncio.sleep(interval)
                 continue
 
-            self.log.debug(
-                f"Scheduler tick #{tick}: Generating homepage scan tasks for forums: "
-                f"{[forum.fname for forum in forums]}"
+            logger.debug(
+                "Scheduler tick #{}: Generating homepage scan tasks for forums: {}",
+                tick,
+                [forum.fname for forum in forums],
             )
             await self._schedule_homepage_scans(forums, is_good=False)
 
             # 每 N 个周期扫描一次精华贴首页
             if tick % good_every == 0:
-                self.log.debug("Extra GOOD-section homepage scheduling this tick.")
+                logger.debug("Extra GOOD-section homepage scheduling this tick.")
                 await self._schedule_homepage_scans(forums, is_good=True)
 
-            self.log.debug(f"All homepage tasks scheduled. Sleeping for {interval} seconds.")
+            logger.debug("All homepage tasks scheduled. Sleeping for {} seconds.", interval)
             await asyncio.sleep(interval)
             tick += 1
 
     async def _run_backfill(self):
         """历史回溯调度任务生成器。"""
         max_pages = self.container.config.max_backfill_pages
-        self.log.info(f"Starting BACKFILL mode (homepage kickoff, max_pages={max_pages}).")
+        logger.info("Starting BACKFILL mode (homepage kickoff, max_pages={}).", max_pages)
         forums = self.container.forums or []
 
         if not forums:
-            self.log.warning("No forums configured in tieba.forums. Scheduler will be idle.")
+            logger.warning("No forums configured in tieba.forums. Scheduler will be idle.")
             return
 
         for forum in forums:
             await self._schedule_backfill_homepage(forum, max_pages, is_good=False)
             await self._schedule_backfill_homepage(forum, max_pages, is_good=True)
 
-        self.log.info("Backfill homepage tasks scheduled. Scheduler is exiting.")
+        logger.info("Backfill homepage tasks scheduled. Scheduler is exiting.")
 
     async def _schedule_homepage_scans(self, forums: list[Forum], *, is_good: bool = False):
         """调度首页扫描任务（周期模式）。
@@ -114,7 +115,7 @@ class Scheduler:
             task = Task(priority=Priority.HIGH, content=task_content)
             await self.queue.put(task)
             section = "GOOD" if is_good else "NORMAL"
-            self.log.debug(f"Scheduled {section} homepage scan for [{forum.fname}吧] with priority=HIGH")
+            logger.debug("Scheduled {} homepage scan for [{}吧] with priority=HIGH", section, forum.fname)
 
     async def _schedule_backfill_homepage(self, forum: Forum, max_pages: int, *, is_good: bool = False):
         """为单个贴吧调度回溯任务的起点页面，由 Worker 递推后续页。
@@ -138,7 +139,10 @@ class Scheduler:
         task = Task(priority=Priority.BACKFILL, content=task_content)
         await self.queue.put(task)
         section = "GOOD" if is_good else "NORMAL"
-        self.log.debug(
-            f"Scheduled BACKFILL [{section}] start pn={start_pn} for [{forum.fname}吧] "
-            f"with priority=BACKFILL (max_pages={max_pages})."
+        logger.debug(
+            "Scheduled BACKFILL [{}] start pn={} for [{}吧] with priority=BACKFILL (max_pages={}).",
+            section,
+            start_pn,
+            forum.fname,
+            max_pages,
         )

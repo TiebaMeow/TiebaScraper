@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
@@ -16,8 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from zoneinfo import ZoneInfo
 
 from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt, wait_exponential, wait_fixed
-
-from ..utils import to_jsonable
+from tiebameow.utils.logger import logger
 
 try:
     import orjson as _orjson
@@ -27,19 +25,16 @@ except Exception:
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    import aiotieba.typing as aiotieba
     import redis.asyncio as redis
     from pydantic import WebsocketUrl
+    from tiebameow.models.dto import CommentDTO, PostDTO, ThreadDTO
 
-    from ..config import ConsumerConfig
+    from .config import ConsumerConfig
     from .ws_server import WebSocketServer
 
-    AiotiebaType = aiotieba.Thread | aiotieba.Post | aiotieba.Comment
+    type DTOType = ThreadDTO | PostDTO | CommentDTO
+    type ItemType = Literal["thread", "post", "comment"]
 
-
-log = logging.getLogger("publisher")
-
-ItemType = Literal["thread", "post", "comment"]
 
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 
@@ -66,7 +61,7 @@ class EventEnvelope:
                 return _orjson.dumps(self.__dict__, option=_orjson.OPT_SERIALIZE_NUMPY)
             raise RuntimeError("orjson not available")
         except Exception as e:
-            log.exception(f"orjson serialization failed, fallback to json: {e}")
+            logger.exception("orjson serialization failed, fallback to json: {}", e)
             return json.dumps(self.__dict__).encode("utf-8")
 
 
@@ -134,7 +129,7 @@ class WebSocketPublisher(Publisher):
 
     async def _enqueue(self, message: str) -> None:
         if self._stop_event.is_set():
-            log.warning("WebSocketPublisher is closed; dropping message")
+            logger.warning("WebSocketPublisher is closed; dropping message")
             return
 
         dropped: str | None = None
@@ -145,7 +140,7 @@ class WebSocketPublisher(Publisher):
             self._message_event.set()
 
         if dropped is not None:
-            log.warning("WebSocketPublisher queue full; dropped oldest message")
+            logger.warning("WebSocketPublisher queue full; dropped oldest message")
 
     async def _next_message(self) -> str | None:
         while True:
@@ -162,7 +157,7 @@ class WebSocketPublisher(Publisher):
             return
         async with self._queue_lock:
             if len(self._queue) >= self.queue_capacity:
-                log.warning("WebSocketPublisher queue full; dropping message on requeue")
+                logger.warning("WebSocketPublisher queue full; dropping message on requeue")
                 return
             self._queue.appendleft(message)
             self._message_event.set()
@@ -185,18 +180,18 @@ class WebSocketPublisher(Publisher):
                     delivered = await self._server.broadcast_text(message)
                     if delivered:
                         return True
-                    log.debug("WebSocketPublisher has no active subscribers; will retry later")
+                    logger.debug("WebSocketPublisher has no active subscribers; will retry later")
                     return False
         except Exception as e:
-            log.exception(
-                "Failed to broadcast message via WebSocket after %d retries: %s",
+            logger.exception(
+                "Failed to broadcast message via WebSocket after {} retries: {}",
                 self.max_retries,
                 e,
             )
         return False
 
     async def _worker_loop(self) -> None:
-        log.debug("WebSocketPublisher worker started")
+        logger.debug("WebSocketPublisher worker started")
         try:
             while True:
                 message = await self._next_message()
@@ -212,7 +207,7 @@ class WebSocketPublisher(Publisher):
         except asyncio.CancelledError:
             raise
         finally:
-            log.debug("WebSocketPublisher worker stopped")
+            logger.debug("WebSocketPublisher worker stopped")
 
     async def publish_id(self, item_type: ItemType, item_id: int) -> None:
         payload = {"type": item_type, "id": int(item_id)}
@@ -300,7 +295,7 @@ class RedisStreamsPublisher(Publisher):
                             pass
                         raise
         except Exception as e:
-            log.exception(f"{fail_log_msg} after {self.max_retries} retries: {e}")
+            logger.exception("{} after {} retries: {}", fail_log_msg, self.max_retries, e)
             raise
 
     async def publish_id(self, item_type: ItemType, item_id: int) -> None:
@@ -341,7 +336,7 @@ class RedisStreamsPublisher(Publisher):
 
 def build_envelope(
     item_type: ItemType,
-    obj: AiotiebaType,
+    obj: DTOType,
     *,
     event_type: str = "upsert",
     backfill: bool = False,
@@ -351,7 +346,7 @@ def build_envelope(
         eid = obj.tid
     else:
         eid = obj.pid
-    payload = to_jsonable(obj)
+    payload = obj.model_dump(mode="json")
 
     return EventEnvelope(
         schema=schema,

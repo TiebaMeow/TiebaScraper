@@ -9,17 +9,18 @@
 """
 
 import asyncio
-import logging
 import platform
 from typing import Literal
 
+from tiebameow.utils.logger import init_logger, logger
+
 from src.core import initialize_application
 from src.scraper import Scheduler, Worker
-from src.utils import setup_logging
 
-# 统一日志配置（可用环境变量 LOG_LEVEL 覆盖级别）
-setup_logging()
-log = logging.getLogger("main")
+init_logger(
+    service_name="TiebaScraper",
+    enable_error_filelog=True,
+)
 
 
 async def main(mode: Literal["periodic", "backfill", "hybrid"] = "periodic"):
@@ -33,7 +34,7 @@ async def main(mode: Literal["periodic", "backfill", "hybrid"] = "periodic"):
 
     tasks: list[asyncio.Task] = []
     try:
-        log.info(f"Starting application in {mode} mode.")
+        logger.info("Starting application in {} mode.", mode=mode)
 
         scheduler = Scheduler(queue=task_queue, container=container)
         worker_count = 3 if mode == "periodic" else 5
@@ -65,12 +66,11 @@ async def main(mode: Literal["periodic", "backfill", "hybrid"] = "periodic"):
             await asyncio.gather(*tasks)
 
     except asyncio.CancelledError:
-        log.info(f"Received cancellation in {mode} mode.")
+        logger.info("Received cancellation in {} mode.", mode)
         raise
 
     except Exception as e:
-        log.exception(f"Application failed to start or run: {e}")
-
+        logger.exception("Application failed to start or run: {}", e)
     finally:
         for t in tasks:
             if not t.done():
@@ -78,7 +78,7 @@ async def main(mode: Literal["periodic", "backfill", "hybrid"] = "periodic"):
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
-        log.info("Shutting down application...")
+        logger.info("Shutting down application...")
 
         try:
             await Worker.close_datastore()
@@ -98,14 +98,13 @@ def setup_event_loop():
             asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
         except ImportError:
-            # 非关键依赖，降低为 warning，避免冗长堆栈
-            log.warning("uvloop not installed; using default asyncio event loop.")
+            logger.warning("uvloop not installed; using default asyncio event loop.")
 
         except Exception as e:
-            log.warning(f"Failed to set up uvloop; using default asyncio event loop. Error: {e}")
+            logger.warning("Failed to set up uvloop; using default asyncio event loop. Error: {}", e)
 
     else:
-        log.info("Running on Windows, using the default ProactorEventLoop.")
+        logger.info("Running on Windows, using the default ProactorEventLoop.")
 
 
 if __name__ == "__main__":
@@ -125,4 +124,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main(args.mode))
     except KeyboardInterrupt:
-        log.info("Application stopped by user.")
+        logger.info("Application stopped by user.")

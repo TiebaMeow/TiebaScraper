@@ -6,28 +6,27 @@
 
 from __future__ import annotations
 
-import logging
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, ClassVar, Literal
 
-import aiotieba.typing as aiotieba
 from cashews import Cache, add_prefix
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
+from tiebameow.models.orm import Comment, Forum, Post, Thread, User
+from tiebameow.utils.logger import logger
 
-from ..models import Comment, Forum, Post, Thread, User
 from .publisher import EventEnvelope, NoopPublisher, RedisStreamsPublisher, WebSocketPublisher, build_envelope
 
 if TYPE_CHECKING:
+    from tiebameow.models.dto import CommentDTO, PostDTO, ThreadDTO
+
     from .container import Container
 
-ItemType = Literal["thread", "post", "comment"]
-AiotiebaType = aiotieba.Thread | aiotieba.Post | aiotieba.Comment
+    type ItemType = Literal["thread", "post", "comment"]
+    type DTOType = ThreadDTO | PostDTO | CommentDTO
 
-log = logging.getLogger("datastore")
 
-CONSUMER_QUEUE_KEY = "consumer:queue"
 PRIMARY_KEY_MAP = {
     Thread: {"tid", "create_time"},
     Post: {"pid", "create_time"},
@@ -102,7 +101,7 @@ class DataStore:
             if self.publisher is not None:
                 await self.publisher.close()
         except Exception as e:
-            log.warning(f"Failed to close publisher: {e}")
+            logger.warning("Failed to close publisher: {}", e)
 
     @asynccontextmanager
     async def get_session(self):
@@ -120,7 +119,7 @@ class DataStore:
             try:
                 yield session
             except Exception as e:
-                log.exception(f"Error in database session: {e}")
+                logger.exception("Error in database session: {}", e)
                 await session.rollback()
                 raise
 
@@ -141,8 +140,13 @@ class DataStore:
         if not ids:
             return set()
 
+        # cashews 的 redis client-side caching 后端在 get_many 入参包含重复 key 时
+        # 可能抛出 KeyError（内部对 missed_keys 做 set.remove）。
+        # 这里通过对 ids 先进行保序去重来规避该问题。
+        unique_ids = list(dict.fromkeys(ids))
+
         # 第一层：内存缓存 / Redis缓存(With Client-Side Caching)过滤
-        ids_after_cache = await self._filter_by_cache(item_type, ids)
+        ids_after_cache = await self._filter_by_cache(item_type, unique_ids)
         if not ids_after_cache:
             return set()
 
@@ -174,7 +178,7 @@ class DataStore:
 
         new_ids = {ids[i] for i, key in enumerate(cache_keys) if key not in cached_results}
 
-        log.debug(f"Cache filter: {len(ids)} -> {len(new_ids)} for {item_type}")
+        logger.debug("Cache filter: {} -> {} for {}", len(ids), len(new_ids), item_type)
         return new_ids
 
     async def _filter_by_database(self, item_type: ItemType | Literal["user"], ids: list[int]) -> set[int]:
@@ -207,11 +211,17 @@ class DataStore:
             existing_ids = {row[0] for row in result.fetchall()}
 
         if existing_ids:
-            log.debug(f"Database filter: Found {len(existing_ids)} existing IDs for {item_type}")
+            logger.debug("Database filter: Found {} existing IDs for {}", len(existing_ids), item_type)
             await self._mark_as_processed(item_type, existing_ids)
 
         new_ids = set(ids) - existing_ids
-        log.debug(f"Database filter: {len(ids)} -> {len(new_ids)} for {item_type} (found {len(existing_ids)} existing)")
+        logger.debug(
+            "Database filter: {} -> {} for {} (found {} existing)",
+            len(ids),
+            len(new_ids),
+            item_type,
+            len(existing_ids),
+        )
         return new_ids
 
     async def _mark_as_processed(self, item_type: ItemType | Literal["user"], new_ids: set[int]):
@@ -222,7 +232,7 @@ class DataStore:
         updates = {f"{item_type}:{item_id}": True for item_id in new_ids}
         await self.cache.set_many(updates, expire=self.container.config.cache_ttl_seconds)
 
-        log.debug(f"Marked {len(new_ids)} new {item_type} IDs as processed")
+        logger.debug("Marked {} new {} IDs as processed", len(new_ids), item_type)
 
     async def save_items[T: (Comment, Forum, Post, Thread, User)](self, items: list[T], upsert: bool = False):
         """将SQLAlchemy对象批量保存到数据库。
@@ -260,13 +270,13 @@ class DataStore:
 
                 await session.execute(statement)
                 await session.commit()
-                log.debug(f"Successfully saved/ignored {len(items)} items using ON CONFLICT.")
+                logger.debug("Successfully saved/ignored {} items using ON CONFLICT.", len(items))
 
             except IntegrityError as e:
-                log.error(f"An unexpected integrity error occurred: {e}")
+                logger.error("An unexpected integrity error occurred: {}", e)
                 raise
             except Exception as e:
-                log.error(f"Failed to save items: {e}")
+                logger.error("Failed to save items: {}", e)
                 raise
 
     async def get_threads_by_tids(self, tids: list[int] | set[int]) -> list[Thread]:
@@ -315,7 +325,7 @@ class DataStore:
     async def push_object_event(
         self,
         item_type: ItemType,
-        obj: AiotiebaType,
+        obj: DTOType,
         *,
         backfill: bool = False,
         event_type: str = "upsert",

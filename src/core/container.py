@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import logging
 from asyncio import Semaphore
 from typing import TYPE_CHECKING
 
@@ -14,16 +13,14 @@ import redis.asyncio as redis
 from aiolimiter import AsyncLimiter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from tiebameow.client import Client
+from tiebameow.models.orm import Forum
+from tiebameow.utils.logger import logger
 
-from .client import Client
 from .ws_server import WebSocketServer
 
 if TYPE_CHECKING:
-    from ..config import Config
-    from ..models import Forum
-
-
-log = logging.getLogger("container")
+    from .config import Config
 
 
 class Container:
@@ -37,8 +34,8 @@ class Container:
         limiter (AsyncLimiter): 漏桶算法实现的异步限流器
         db_engine (AsyncEngine): SQLAlchemy异步数据库引擎
         redis_client (redis.Redis): Redis异步客户端
-        tb_client (aiotieba.Client): aiotieba异步客户端
-        fids (list[int]): fid列表
+        tb_client (Client): tiebameow异步贴吧客户端
+        forums (list[Forum]): 贴吧信息缓存
         async_sessionmaker: 异步数据库会话工厂
     """
 
@@ -73,29 +70,29 @@ class Container:
         Raises:
             Exception: 当资源初始化失败时抛出异常。
         """
-        log.info("Initializing container resources...")
+        logger.info("Initializing container resources...")
         try:
             self.limiter = AsyncLimiter(1, time_period=1 / self.config.rps_limit)
             self.semaphore = Semaphore(self.config.concurrency_limit)
-            log.info(f"AioLimiter initialized with a rate of {self.config.rps_limit} RPS.")
-
+            logger.info("AioLimiter initialized with a rate of {} RPS.", self.config.rps_limit)
             self.tb_client = await Client(
                 limiter=self.limiter,
                 semaphore=self.semaphore,
-                cooldown_seconds_429=self.config.cooldown_seconds_429,
+                cooldown_429=self.config.cooldown_seconds_429,
+                retry_attempts=5,
             ).__aenter__()
-            log.info("Tieba Client started.")
+            logger.info("Tieba Client started.")
 
             self.db_engine = create_async_engine(self.config.database_url, echo=False)
             self.async_sessionmaker = async_sessionmaker(
                 bind=self.db_engine, class_=AsyncSession, expire_on_commit=False
             )
-            log.info("PostgreSQL AsyncEngine created.")
+            logger.info("PostgreSQL AsyncEngine created.")
 
             if self.config.consumer_transport == "redis":
                 self.redis_client = await redis.from_url(self.config.redis_url, decode_responses=True)
-                await self.redis_client.ping()
-                log.info("Redis client connected successfully.")
+                await self.redis_client.ping()  # type: ignore
+                logger.info("Redis client connected successfully.")
             elif self.config.consumer_transport == "websocket" and self.config.websocket_enabled:
                 # 启动内置 WS 服务
                 self.ws_server = WebSocketServer(self.config.websocket_url, token=self.config.websocket_token)
@@ -107,21 +104,19 @@ class Container:
                     if not fid:
                         return False
 
-                    from ..models import Forum as ForumModel  # local import to avoid cycle at top
-
                     async with self.async_sessionmaker() as session:
                         try:
                             # 是否已存在
-                            res = await session.execute(select(ForumModel).where(ForumModel.fname == fname))
+                            res = await session.execute(select(Forum).where(Forum.fname == fname))
                             exist = res.scalar_one_or_none()
                             if exist is None:
-                                session.add(ForumModel(fid=fid, fname=fname))
+                                session.add(Forum(fid=fid, fname=fname))
                                 await session.commit()
-                                log.info("Added forum via WS: %s(fid=%s)", fname, fid)
+                                logger.info("Added forum via WS: [{}](fid={})", fname, fid)
                             # 更新容器缓存
                             current = self.forums or []
                             if all(f.fname != fname for f in current):
-                                current.append(ForumModel(fid=fid, fname=fname))
+                                current.append(Forum(fid=fid, fname=fname))
                                 self.forums = current
                             return True
                         except Exception:
@@ -137,18 +132,18 @@ class Container:
                     self.ws_server.on_add_forum(_add_forum)
                     self.ws_server.on_remove_forum(_remove_forum)
                 else:
-                    log.warning("WebSocket dynamic forum management is only supported in 'periodic' mode.")
+                    logger.warning("WebSocket dynamic forum management is only supported in 'periodic' mode.")
                 await self.ws_server.start()
-                log.info("WebSocket server started: %s", self.ws_server.get_ws_url())
+                logger.info("WebSocket server started: %s", self.ws_server.get_ws_url())
 
             elif self.config.consumer_transport == "websocket":
-                log.warning("WebSocket consumer transport selected but WebSocket server is disabled in config.")
-                log.warning("Nothing will be sent to consumers.")
+                logger.warning("WebSocket consumer transport selected but WebSocket server is disabled in config.")
+                logger.warning("Nothing will be sent to consumers.")
 
-            log.info("Container resources initialized successfully.")
+            logger.info("Container resources initialized successfully.")
 
         except Exception as e:
-            log.exception(f"Failed to initialize container resources: {e}")
+            logger.exception(f"Failed to initialize container resources: {e}")
             await self.teardown()
             raise
 
@@ -162,20 +157,18 @@ class Container:
 
         该方法是幂等的，可以安全地多次调用。
         """
-        log.info("Tearing down container resources...")
+        logger.info("Tearing down container resources...")
 
         if self.redis_client:
             await self.redis_client.close()
-            log.info("Redis client closed.")
-
+            logger.info("Redis client closed.")
         if self.db_engine:
             await self.db_engine.dispose()
-            log.info("PostgreSQL AsyncEngine disposed.")
+            logger.info("PostgreSQL AsyncEngine disposed.")
 
         if self.tb_client:
             await self.tb_client.__aexit__()
-            log.info("Tieba Client closed.")
-
+            logger.info("Tieba Client closed.")
         if self.ws_server:
             try:
                 await self.ws_server.stop()
@@ -183,4 +176,4 @@ class Container:
                 pass
             self.ws_server = None
 
-        log.info("Container resources torn down successfully.")
+        logger.info("Container resources torn down successfully.")

@@ -3,7 +3,7 @@ import json
 from typing import Any, Literal, cast
 
 from aiohttp import ClientSession, WSMsgType
-from deserialization import deserialize
+from tiebameow.serializer import deserialize
 
 WS_URL = "ws://127.0.0.1:8000/ws"
 
