@@ -70,9 +70,21 @@ class TaskHandler(ABC):
         if not items:
             return
 
-        user_infos = [item.author for item in items if item.author]
-        user_info_models = [User.from_dto(u) for u in user_infos]
+        user_infos = [item.author for item in items if item.author and item.author.user_id]
+        if not user_infos:
+            return
+
+        all_user_ids = [u.user_id for u in user_infos]
+        new_user_ids = await self.datastore.filter_new_ids("user", all_user_ids)
+
+        if not new_user_ids:
+            return
+
+        new_users_map = {u.user_id: u for u in user_infos if u.user_id in new_user_ids}
+        user_info_models = [User.from_dto(u) for u in new_users_map.values()]
+
         await self.datastore.save_items(user_info_models)
+        self.log.debug("Saved {} new users to DB.", len(user_info_models))
 
     @abstractmethod
     async def handle(self, task_content):
