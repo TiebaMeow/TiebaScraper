@@ -7,10 +7,10 @@ import pytest
 import redis.asyncio as redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from tiebameow.models.orm import Base, Forum
 
-from src.config import ConsumerConfig
+from src.core.config import ConsumerConfig
 from src.core.publisher import EventEnvelope, RedisStreamsPublisher
-from src.models.models import Base, Forum
 
 ON_CI = os.getenv("CI", "").lower() == "true" or os.getenv("GITHUB_ACTIONS") == "true"
 

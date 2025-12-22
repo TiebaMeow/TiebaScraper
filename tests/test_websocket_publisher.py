@@ -6,7 +6,7 @@ import pytest
 from aiohttp import ClientSession, WSMsgType
 from pydantic import TypeAdapter, WebsocketUrl
 
-from src.config import ConsumerConfig
+from src.core.config import ConsumerConfig
 from src.core.publisher import EventEnvelope, WebSocketPublisher
 from src.core.ws_server import WebSocketServer
 

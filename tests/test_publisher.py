@@ -1,28 +1,11 @@
-from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, cast
 
 import pytest
+from tiebameow.models.dto import ShareThreadDTO, ThreadDTO, ThreadUserDTO
 
-from src.config import ConsumerConfig
+from src.core.config import ConsumerConfig
 from src.core.publisher import RedisStreamsPublisher, build_envelope
-
-
-@dataclass
-class _User:
-    user_id: int
-
-
-@dataclass
-class _Thread:
-    tid: int
-    fid: int
-    fname: str
-    title: str = "t"
-    text: str = "tx"
-    last_time: int = 0
-    reply_num: int = 0
-    user: _User = field(default_factory=lambda: _User(1))
-    contents: object = None
 
 
 class DummyRedis:
@@ -65,7 +48,46 @@ async def test_build_envelope_and_publish_with_retry():
         ),
     )
 
-    t = _Thread(tid=11, fid=22, fname="bar")
+    t = ThreadDTO(
+        tid=11,
+        fid=22,
+        fname="bar",
+        pid=11,
+        author_id=1,
+        author=ThreadUserDTO(
+            user_id=1,
+            portrait="p",
+            user_name="u",
+            nick_name_new="n",
+            level=1,
+            glevel=1,
+            gender="UNKNOWN",
+            icons=[],
+            is_bawu=False,
+            is_vip=False,
+            is_god=False,
+            priv_like="PUBLIC",
+            priv_reply="ALL",
+        ),
+        title="t",
+        contents=[],
+        is_good=False,
+        is_top=False,
+        is_share=False,
+        is_hide=False,
+        is_livepost=False,
+        is_help=False,
+        agree_num=0,
+        disagree_num=0,
+        reply_num=0,
+        view_num=0,
+        share_num=0,
+        create_time=datetime.fromtimestamp(0),
+        last_time=datetime.fromtimestamp(0),
+        thread_type=0,
+        tab_id=0,
+        share_origin=ShareThreadDTO(pid=0, tid=0, fid=0, fname="", author_id=0, title="", contents=[]),
+    )
     env = build_envelope("thread", cast("Any", t), event_type="upsert", backfill=False)
     assert env.object_id == 11
     assert env.fid == 22

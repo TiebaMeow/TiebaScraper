@@ -14,7 +14,7 @@ dependencies = [
     "redis[hiredis]>=7.1.0",
     "sqlalchemy[asyncio]>=2.0.45",
     "tenacity>=9.1.2",
-    "tiebameow[orm]>=0.1.0b4",
+    "tiebameow[orm]>=0.1.0rc1",
     "tzdata>=2025.3",
 ]
 

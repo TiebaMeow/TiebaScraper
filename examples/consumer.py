@@ -2,9 +2,9 @@ import asyncio
 import json
 from typing import Any
 
-from deserialization import deserialize
 from redis.asyncio import Redis
 from redis.exceptions import ResponseError
+from tiebameow.serializer import deserialize
 
 
 async def main() -> None:
