@@ -80,7 +80,7 @@ uv sync
 partition_enabled = true
 ```
 
-并根据你的数据量合理设置 p_interval 的值（如 "1 month"），以确保单个分区不会太大。
+并根据你的数据量合理设置 p_interval 的值（如 "3 months"），以确保单个分区不会太大。
 
 然后请确保 PostgreSQL 数据库已安装 `TimescaleDB` 扩展。可以参考[官方文档](https://www.tigerdata.com/docs/self-hosted/latest/install)进行安装，推荐直接使用官方 Docker 镜像 `timescale/timescaledb:latest-pg17`。
 
@@ -95,7 +95,7 @@ partition_enabled = true
 实时监控模式下，程序将定期扫描指定贴吧的首页，并根据配置将获取到的新内容推送到消费者队列中。
 
 ```bash
-uv run python main.py
+uv run main.py
 ```
 
 #### 历史数据回溯模式
@@ -103,7 +103,7 @@ uv run python main.py
 历史数据回溯模式下，程序将根据用户定义的深度抓取指定贴吧的历史数据。
 
 ```bash
-uv run python main.py --mode backfill
+uv run main.py --mode backfill
 ```
 
 #### 混合模式
@@ -111,7 +111,7 @@ uv run python main.py --mode backfill
 混合模式下，程序将同时运行实时监控和历史数据回溯。混合模式的历史数据回溯任务将从第2页开始抓取。
 
 ```bash
-uv run python main.py --mode hybrid
+uv run main.py --mode hybrid
 ```
 
 ### 内容审查
@@ -121,7 +121,7 @@ uv run python main.py --mode hybrid
 你可以选择两种消息格式：
 
 - `id` 模式仅推送内容类型与 tid/pid，需要内容审查端通过回表查询或手动 fetch 获取完整对象，不过你可以获得更小的序列化/反序列化开销与更小的消息体。
-- `object` 模式会推送完整序列化后的对象，你可以直接获得完整数据，并可通过 [deserialization.py](./examples/deserialization.py) 反序列化得到完整的 `aiotieba` 对象，但会带来更大的消息体与更大的序列化/反序列化开销。
+- `object` 模式会推送完整序列化后的对象，你可以直接获得完整数据，并可通过 [tiebameow](https://github.com/TiebaMeow/tiebameow/blob/main/src/tiebameow/serializer/serializer.py) 提供的反序列化函数反序列化得到完整的 `tiebameow` DTO 对象，但会带来更大的消息体与更大的序列化/反序列化开销。DTO 对象的定义请参考 [tiebameow/models/dto.py](https://github.com/TiebaMeow/tiebameow/blob/main/src/tiebameow/models/dto.py)。
 
 如果你希望 `TiebaScraper` -> `内容审查服务` 的消息推送足够可靠，或者说你不希望漏掉任何一条内容，推荐使用 Redis + object 模式。object 模式下的 Redis Streams 可以保证消息不丢失，并且可以通过消费者组来实现多实例水平扩展。详细原理可参考 [Redis Streams 官方文档](https://redis.io/docs/latest/develop/data-types/streams/) 或 [中文教程](https://redis.com.cn/redis-stream.html)。
 
@@ -204,10 +204,23 @@ TiebaMeow 提供了一个基于 NoneBot2 的 QQ 机器人 [TiebaManageBot](https
 ## 项目结构
 
 ```text
-src/
-├── core/           # 核心模块（依赖注入、数据存储等）
-├── models/         # 数据模型定义
-├── schemas/        # 碎片模型定义
-├── scraper/        # 爬虫核心（调度器、任务、工作器）
-└── utils/          # 工具类
+.
+├── examples/               # 示例代码（消费者实现等）
+├── src/
+│   ├── core/               # 核心架构模块
+│   │   ├── config.py       # 配置加载与 Pydantic 模型定义
+│   │   ├── container.py    # 依赖注入容器 (IoC)，管理 DB/Redis/Client 生命周期
+│   │   ├── datastore.py    # 数据持久化逻辑 (PostgreSQL/TimescaleDB)
+│   │   ├── initialize.py   # 应用初始化流程
+│   │   ├── publisher.py    # 消息推送 (Redis/WebSocket)
+│   │   └── ws_server.py    # WebSocket 服务端实现
+│   ├── scraper/            # 爬虫业务逻辑
+│   │   ├── scheduler.py    # 任务调度器 (周期性/回溯模式)
+│   │   ├── tasks.py        # 任务定义 (Task 数据类)
+│   │   └── worker.py       # 任务执行器 (Worker)
+│   └── utils/              # 通用工具函数
+├── tests/                  # 测试用例
+├── config.toml             # 配置文件
+├── main.py                 # 程序入口
+└── pyproject.toml          # 项目依赖与构建配置
 ```
