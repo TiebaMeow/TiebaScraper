@@ -213,6 +213,7 @@ async def test_full_scan_posts_handler_process_page():
         save_items=AsyncMock(),
         push_to_id_queue=AsyncMock(),
         push_object_event=AsyncMock(),
+        filter_new_ids=AsyncMock(return_value={post.pid}),
     )
     queue: asyncio.PriorityQueue[Task] = asyncio.PriorityQueue()
     handler = FullScanPostsTaskHandler(
