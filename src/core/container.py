@@ -143,7 +143,7 @@ class Container:
             logger.info("Container resources initialized successfully.")
 
         except Exception as e:
-            logger.exception(f"Failed to initialize container resources: {e}")
+            logger.exception("Failed to initialize container resources: {}", e)
             await self.teardown()
             raise
 
@@ -153,7 +153,7 @@ class Container:
         按相反顺序安全关闭所有已初始化的资源：
         1. Redis客户端连接
         2. PostgreSQL数据库引擎
-        3. aiotieba客户端
+        3. tiebameow.client.Client客户端
 
         该方法是幂等的，可以安全地多次调用。
         """

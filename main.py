@@ -34,7 +34,7 @@ async def main(mode: Literal["periodic", "backfill", "hybrid"] = "periodic"):
 
     tasks: list[asyncio.Task] = []
     try:
-        logger.info("Starting application in {} mode.", mode=mode)
+        logger.info("Starting application in {} mode.", mode)
 
         scheduler = Scheduler(queue=task_queue, container=container)
         worker_count = 3 if mode == "periodic" else 5
