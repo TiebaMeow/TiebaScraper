@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from zoneinfo import ZoneInfo
 
 from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt, wait_exponential, wait_fixed
+from tiebameow.models.dto import PostDTO, ThreadDTO
 from tiebameow.utils.logger import logger
 
 try:
@@ -27,7 +28,7 @@ if TYPE_CHECKING:
 
     import redis.asyncio as redis
     from pydantic import WebsocketUrl
-    from tiebameow.models.dto import CommentDTO, PostDTO, ThreadDTO
+    from tiebameow.models.dto import CommentDTO
 
     from .config import ConsumerConfig
     from .ws_server import WebSocketServer
@@ -342,10 +343,12 @@ def build_envelope(
     backfill: bool = False,
 ) -> EventEnvelope:
     schema = f"tieba.{item_type}.v1"
-    if item_type == "thread":
+    if isinstance(obj, ThreadDTO):
         eid = obj.tid
-    else:
+    elif isinstance(obj, PostDTO):
         eid = obj.pid
+    else:
+        eid = obj.cid
     payload = obj.model_dump(mode="json")
 
     return EventEnvelope(

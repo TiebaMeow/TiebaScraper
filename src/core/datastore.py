@@ -330,7 +330,7 @@ class DataStore:
         backfill: bool = False,
         event_type: str = "upsert",
     ) -> None:
-        """将完整对象以事件形式推送到对象消费者（Redis Streams）。
+        """将完整对象以事件形式推送到对象消费者（Redis Streams 或 WebSocket）。
 
         在 config.mode != 'object' 时为 no-op。
         """
