@@ -222,7 +222,7 @@ async def test_push_to_id_and_object_events():
     )
     await ds_object.push_object_event("thread", obj)  # type: ignore[arg-type]
 
-    stream_key = f"{container.config.consumer_config.stream_prefix}:1:thread"
+    stream_key = f"{container.config.consumer_config.stream_prefix}:1"
     assert stream_key in redis.streams
     payload = redis.streams[stream_key][0]
     assert payload.startswith(b"{")

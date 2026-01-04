@@ -14,8 +14,8 @@ async def main() -> None:
     redis = Redis(host="localhost", port=6379, db=0, decode_responses=True)
 
     # 指定 Stream 名称
-    # stream key 构造：f"{stream_prefix}:{fid}:{object_type}"
-    stream_key = "scraper:tieba:events:123456789:thread"
+    # stream key 构造：f"{stream_prefix}:{fid}"
+    stream_key = "scraper:tieba:events:123456789"
     # 指定消费者组和消费者名称
     # 不同消费者组可以同时获取同一条消息（广播）
     # 但同一消费者组中只有一个消费者会被分配到该条消息（负载均衡）
@@ -48,7 +48,7 @@ async def main() -> None:
             # 消息结构示例：
             # [
             #     (
-            #         "scraper:tieba:events:123456789:thread",
+            #         "scraper:tieba:events:123456789",
             #         [
             #             (
             #                 "1714389534321-0",

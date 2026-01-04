@@ -320,7 +320,7 @@ class RedisStreamsPublisher(Publisher):
             pass
 
     async def publish_object(self, envelope: EventEnvelope) -> None:
-        stream = f"{self.stream_prefix}:{envelope.fid}:{envelope.object_type}"
+        stream = f"{self.stream_prefix}:{envelope.fid}"
         data = envelope.to_json_bytes()
 
         entry = {"data": data}

@@ -109,7 +109,7 @@ async def test_postgres_and_redis_live_roundtrip():
             )
             await pub.publish_object(env2)
 
-            stream_key = f"{consumer_cfg.stream_prefix}:1:thread"
+            stream_key = f"{consumer_cfg.stream_prefix}:1"
             entries = await r.xrevrange(stream_key, count=2)
             assert entries, "expected Redis stream entries to exist"
 
@@ -128,7 +128,7 @@ async def test_postgres_and_redis_live_roundtrip():
             # best-effort close for different redis.asyncio versions
             try:
                 await r.delete(consumer_cfg.id_queue_key)
-                await r.delete(f"{consumer_cfg.stream_prefix}:1:thread")
+                await r.delete(f"{consumer_cfg.stream_prefix}:1")
                 aclose = getattr(r, "aclose", None)
                 if callable(aclose):
                     await aclose()  # type: ignore[misc]
