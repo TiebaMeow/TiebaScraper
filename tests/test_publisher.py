@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any, cast
 
 import pytest
-from tiebameow.models.dto import ShareThreadDTO, ThreadDTO, ThreadUserDTO
+from tiebameow.models.dto import BaseThreadDTO, ThreadDTO, ThreadUserDTO
 
 from src.core.config import ConsumerConfig
 from src.core.publisher import RedisStreamsPublisher, build_envelope
@@ -86,7 +86,7 @@ async def test_build_envelope_and_publish_with_retry():
         last_time=datetime.fromtimestamp(0),
         thread_type=0,
         tab_id=0,
-        share_origin=ShareThreadDTO(pid=0, tid=0, fid=0, fname="", author_id=0, title="", contents=[]),
+        share_origin=BaseThreadDTO(pid=0, tid=0, fid=0, fname="", author_id=0, title="", contents=[]),
     )
     env = build_envelope("thread", cast("Any", t), event_type="upsert", backfill=False)
     assert env.object_id == 11

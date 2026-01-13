@@ -7,11 +7,11 @@ from unittest.mock import AsyncMock
 import pytest
 from tiebameow.models.dto import (
     BaseForumDTO,
+    BaseThreadDTO,
     PageInfoDTO,
     PostDTO,
     PostsDTO,
     PostUserDTO,
-    ShareThreadDTO,
     ThreadDTO,
     ThreadsDTO,
     ThreadUserDTO,
@@ -87,7 +87,7 @@ def make_thread(
         last_time=datetime.fromtimestamp(last_time),
         thread_type=0,
         tab_id=0,
-        share_origin=ShareThreadDTO(pid=0, tid=0, fid=0, fname="", author_id=0, title="", contents=[]),
+        share_origin=BaseThreadDTO(pid=0, tid=0, fid=0, fname="", author_id=0, title="", contents=[]),
     )
 
 

@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Any, cast
 
 import pytest
-from tiebameow.models.dto import ShareThreadDTO, ThreadDTO, ThreadUserDTO
+from tiebameow.models.dto import BaseThreadDTO, ThreadDTO, ThreadUserDTO
 
 from src.core.config import ConsumerConfig
 from src.core.datastore import DataStore
@@ -218,7 +218,7 @@ async def test_push_to_id_and_object_events():
         last_time=datetime.fromtimestamp(0),
         thread_type=0,
         tab_id=0,
-        share_origin=ShareThreadDTO(pid=0, tid=0, fid=0, fname="", author_id=0, title="", contents=[]),
+        share_origin=BaseThreadDTO(pid=0, tid=0, fid=0, fname="", author_id=0, title="", contents=[]),
     )
     await ds_object.push_object_event("thread", obj)  # type: ignore[arg-type]
 
