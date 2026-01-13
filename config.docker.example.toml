@@ -7,6 +7,18 @@ forums = [
 # 历史回溯模式最大页数
 max_backfill_pages = 100
 
+# （可选）分组配置
+# [[tieba.groups]]
+# name = "important"
+# forums = ["important_forum"]
+# interval_seconds = 15
+
+# 提示：在 Docker Compose 中，你可以直接利用 environment 覆盖配置，
+# 而无需修改此文件。例如在 docker-compose.yml 中添加：
+# environment:
+#   - TIEBA__FORUMS=["bar_1", "bar_2"]
+#   - SCHEDULER__INTERVAL_SECONDS=30
+
 # PostgreSQL 数据库连接信息和分区配置
 # 请与 docker-compose.yml 配置保持一致
 [database]

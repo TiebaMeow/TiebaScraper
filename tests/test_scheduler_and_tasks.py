@@ -13,6 +13,14 @@ class DummyConfig:
     good_page_every_ticks: int = 2
     mode: str = "periodic"
     max_backfill_pages: int = 5
+    default_forums: list[str] | None = None
+    groups: list | None = None
+
+    def __post_init__(self):
+        if self.default_forums is None:
+            self.default_forums = ["bar", "baz"]  # Default list for tests
+        if self.groups is None:
+            self.groups = []
 
 
 @dataclass

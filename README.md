@@ -52,13 +52,15 @@ uv sync
 
 2. 编辑 `config.toml` 文件，根据注释填写相应的配置项
 
-3. 为 `TiebaScraper` 创建一个单独的数据库（名称可以自定义）：
+3. （可选）使用分组配置，可以为不同的分组设置不同的调度周期
+
+4. 为 `TiebaScraper` 创建一个单独的数据库（名称可以自定义）：
 
     ```sql
     CREATE DATABASE tieba_data;
     ```
 
-4. 推荐单独为 `TiebaScraper` 创建一个用户：
+5. 推荐单独为 `TiebaScraper` 创建一个用户：
 
     ```sql
     CREATE USER your_username WITH PASSWORD 'your_password';
@@ -149,6 +151,8 @@ TiebaMeow 提供了一个基于 NoneBot2 的 QQ 机器人 [TiebaManageBot](https
     }
     ```
 
+动态添加的贴吧将会使用全局默认的调度周期运行。
+
 ## Docker 部署
 
 ### 使用 docker-compose
@@ -165,6 +169,8 @@ TiebaMeow 提供了一个基于 NoneBot2 的 QQ 机器人 [TiebaManageBot](https
     ```
 
     然后，根据你的需求编辑 `config.toml` 文件。**请注意**，在 Docker 环境中，应用容器需要通过服务名（`postgres` 和 `redis`）来访问数据库和 Redis，因此请确保主机名配置正确。`config.docker.example.toml` 已预设了正确的主机名。
+
+    你也可以使用环境变量来传递配置参数，环境变量将会优先于配置文件生效，详情请参考 `.env.example` 中的注释。
 
 2. **启动服务**:
 

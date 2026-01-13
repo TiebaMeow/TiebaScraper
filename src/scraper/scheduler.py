@@ -18,6 +18,8 @@ from tiebameow.utils.logger import logger
 from .tasks import Priority, ScanThreadsTask, Task
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from tiebameow.models.orm import Forum
 
     from ..core import Container
@@ -54,37 +56,84 @@ class Scheduler:
             raise ValueError(f"Unknown scheduler mode: {mode}")
 
     async def _run_periodic(self):
-        """周期性调度任务生成器。"""
-        logger.info("Starting PERIODIC mode. Interval: {}s", self.container.config.scheduler_interval_seconds)
-        forums = self.container.forums or []
-        interval = self.container.config.scheduler_interval_seconds
-        good_every = self.container.config.good_page_every_ticks
+        """
+        周期性调度任务生成器。
 
-        if not forums:
-            logger.warning("No forums configured in tieba.forums. Scheduler will be idle.")
+        根据配置的调度间隔，持续生成首页扫描任务，支持分组调度和默认调度。
+        """
+        log_interval = self.container.config.scheduler_interval_seconds
+        logger.info("Starting PERIODIC mode. Default Interval: {}s", log_interval)
+
+        tasks_to_schedule = []
+        grouped_forum_names = set()
+        available_forums_map = {f.fname: f for f in (self.container.forums or [])}
+
+        for group in self.container.config.groups:
+            group_forums = [available_forums_map[name] for name in group.forums if name in available_forums_map]
+            grouped_forum_names.update(group.forums)
+
+            interval = group.interval_seconds or self.container.config.scheduler_interval_seconds
+
+            if group_forums:
+                logger.info(
+                    "Starting Group '{}' loop. Interval: {}s. Forums: {}",
+                    group.name,
+                    interval,
+                    [f.fname for f in group_forums],
+                )
+                tasks_to_schedule.append(
+                    self._run_loop(
+                        lambda f=group_forums: f,
+                        interval,
+                        f"Group-{group.name}",
+                    )
+                )
+            elif group.forums:
+                logger.warning(
+                    "Group '{}' has forums configured {} but none were initialized/found.", group.name, group.forums
+                )
+
+        def get_default_forums() -> list[Forum]:
+            """获取未分组的默认贴吧列表。"""
+            all_forums = self.container.forums or []
+            return [f for f in all_forums if f.fname not in grouped_forum_names]
+
+        logger.info("Starting Default loop for non-grouped/dynamic forums.")
+        tasks_to_schedule.append(
+            self._run_loop(get_default_forums, self.container.config.scheduler_interval_seconds, "Default")
+        )
+
+        if not tasks_to_schedule:
+            logger.warning("No loops scheduled. check configuration.")
             return
 
+        await asyncio.gather(*tasks_to_schedule)
+
+    async def _run_loop(self, forums_getter: Callable[[], list[Forum]], interval: int, task_name: str):
+        """通用调度循环"""
+        good_every = self.container.config.good_page_every_ticks
         tick = 0
         while True:
-            forums = self.container.forums or []
+            forums = forums_getter()
             if not forums:
-                logger.warning("No forums configured. Waiting for {} seconds...", interval)
+                if task_name == "Default":
+                    logger.debug("[{}] No forums to scan. Sleeping.", task_name)
                 await asyncio.sleep(interval)
                 continue
 
             logger.debug(
-                "Scheduler tick #{}: Generating homepage scan tasks for forums: {}",
+                "[{}] tick #{}: Generating homepage scan tasks for {} forums.",
+                task_name,
                 tick,
-                [forum.fname for forum in forums],
+                len(forums),
             )
+
             await self._schedule_homepage_scans(forums, is_good=False)
 
-            # 每 N 个周期扫描一次精华贴首页
             if tick % good_every == 0:
-                logger.debug("Extra GOOD-section homepage scheduling this tick.")
+                logger.debug("[{}] Extra GOOD-section scheduling.", task_name)
                 await self._schedule_homepage_scans(forums, is_good=True)
 
-            logger.debug("All homepage tasks scheduled. Sleeping for {} seconds.", interval)
             await asyncio.sleep(interval)
             tick += 1
 

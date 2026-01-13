@@ -8,6 +8,20 @@ forums = [
 # 历史回溯模式最大页数
 max_backfill_pages = 100
 
+# 贴吧分组配置（可选）
+# 如果配置了分组，该组内的贴吧将使用独立的调度周期
+# 未分组的贴吧仍使用 scheduler.interval_seconds 全局周期
+# [[tieba.groups]]
+# name = "high_freq"
+# forums = ["hot_bar_1", "hot_bar_2"]
+# 覆盖全局调度周期（秒）
+# interval_seconds = 30
+
+# [[tieba.groups]]
+# name = "low_freq"
+# forums = ["dead_bar_1"]
+# interval_seconds = 300
+
 # PostgreSQL 数据库连接信息和分区配置
 [database]
 # 数据库主机地址
