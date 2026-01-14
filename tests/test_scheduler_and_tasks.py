@@ -13,6 +13,7 @@ class DummyConfig:
     good_page_every_ticks: int = 2
     mode: str = "periodic"
     max_backfill_pages: int = 5
+    backfill_force_scan: bool = False
     default_forums: list[str] | None = None
     groups: list | None = None
     pydantic_config: object = None
