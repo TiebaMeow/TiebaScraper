@@ -61,6 +61,7 @@ class TiebaConfig(BaseModel):
     forums: list[str] = []
     groups: list[ForumGroup] = []
     max_backfill_pages: int = Field(100, gt=0)
+    backfill_force_scan: bool = False
 
     @model_validator(mode="after")
     def check_forums_exist(self) -> "TiebaConfig":
@@ -283,6 +284,11 @@ class Config:
     def max_backfill_pages(self) -> int:
         """获取最大回溯深度配置。"""
         return self.pydantic_config.tieba.max_backfill_pages
+
+    @property
+    def backfill_force_scan(self) -> bool:
+        """获取回溯模式是否强制扫描配置。"""
+        return self.pydantic_config.tieba.backfill_force_scan
 
     @property
     def rps_limit(self) -> int:

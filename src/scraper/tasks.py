@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from tiebameow.models.dto import ThreadDTO
+
 
 class Priority(IntEnum):
     """任务优先级，数值越小，优先级越高。
@@ -62,6 +64,7 @@ class ScanThreadsTask:
         is_good: 是否为精华分区，默认为False
         backfill: 是否为回溯任务，默认为False
         max_pages: 最大扫描页数，默认为100
+        force: 是否强制扫描（忽略去重和更新检查），默认为False
     """
 
     fid: int
@@ -71,6 +74,7 @@ class ScanThreadsTask:
     is_good: bool = False
     backfill: bool = False
     max_pages: int = 100
+    force: bool = False
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -81,11 +85,13 @@ class FullScanPostsTask:
         tid: 主题贴tid
         rn: 每页条目数量，默认为30
         backfill: 是否为回溯任务，默认为False
+        thread_dto: 主题贴元数据（用于任务完成后更新DB）
     """
 
     tid: int
     rn: int = 30
     backfill: bool = False
+    thread_dto: ThreadDTO | None = None
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -98,6 +104,8 @@ class IncrementalScanPostsTask:
         last_floor: 上次扫描的最后楼层，默认为1
         rn: 每页条目数量，默认为30
         backfill: 是否为回溯任务，默认为False
+        target_last_time: 期望更新到的最后回复时间（用于任务完成后更新DB）
+        target_reply_num: 期望更新到的回复数（用于任务完成后更新DB）
     """
 
     tid: int
@@ -105,6 +113,8 @@ class IncrementalScanPostsTask:
     last_floor: int = 1
     rn: int = 30
     backfill: bool = False
+    target_last_time: datetime | None = None
+    target_reply_num: int | None = None
 
 
 @dataclasses.dataclass(slots=True, frozen=True)

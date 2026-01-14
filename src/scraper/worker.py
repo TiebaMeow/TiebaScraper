@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from abc import ABC, abstractmethod
 from asyncio import PriorityQueue
 from typing import TYPE_CHECKING, ClassVar
@@ -60,6 +61,29 @@ class TaskHandler(ABC):
         self.queue = queue
         self.batch_size = 100
         self.log = logger.bind(name=f"Worker-{worker_id}")
+
+    async def try_acquire_lock(self, key: str, ttl: int = 1800) -> bool:
+        """尝试获取锁。优先使用Redis，降级使用内存锁。"""
+        if self.container.redis_client:
+            return await self.container.redis_client.set(key, "1", ex=ttl, nx=True)
+        else:
+            now = time.time()
+            expired = [k for k, t in Worker._memory_locks.items() if now > t]
+            for k in expired:
+                Worker._memory_locks.pop(k, None)
+
+            if key in Worker._memory_locks:
+                return False
+
+            Worker._memory_locks[key] = now + ttl
+            return True
+
+    async def release_lock(self, key: str):
+        """释放锁。"""
+        if self.container.redis_client:
+            await self.container.redis_client.delete(key)
+        else:
+            Worker._memory_locks.pop(key, None)
 
     async def ensure_users(self, items: Sequence[ThreadDTO | PostDTO | CommentDTO]):
         """确保用户信息已保存到数据库。
@@ -128,9 +152,16 @@ class ThreadsTaskHandler(TaskHandler):
             threads_data.objs = [t for t in threads_data.objs if not t.is_livepost]
             all_tids = [t.tid for t in threads_data.objs]
 
-            new_tids = await self.datastore.filter_new_ids("thread", all_tids)
-            old_tids = set(all_tids) - new_tids
-            self.log.debug("{}吧, pn={}: Found {} threads, {} are new.", fname, pn, len(all_tids), len(new_tids))
+            if task_content.force:
+                new_tids = set(all_tids)
+                old_tids = set()
+                self.log.info(
+                    "{}吧, pn={}: Force scan enabled. Processing {} threads as new.", fname, pn, len(all_tids)
+                )
+            else:
+                new_tids = await self.datastore.filter_new_ids("thread", all_tids)
+                old_tids = set(all_tids) - new_tids
+                self.log.debug("{}吧, pn={}: Found {} threads, {} are new.", fname, pn, len(all_tids), len(new_tids))
 
             await self._process_new_threads(threads_data, new_tids, backfill)
 
@@ -145,6 +176,7 @@ class ThreadsTaskHandler(TaskHandler):
                     is_good=is_good,
                     backfill=backfill,
                     max_pages=max_pages,
+                    force=task_content.force,
                 )
                 await self.queue.put(Task(priority=Priority.BACKFILL, content=next_task_content))
                 self.log.info("[{}吧] Scheduled backfill ScanThreadsTask, pn={}", fname, pn + 1)
@@ -156,9 +188,9 @@ class ThreadsTaskHandler(TaskHandler):
         """处理新发现的主题贴。
 
         主要流程：
-        1. 转换为数据库模型并保存
+        1. 确保用户信息已保存
         2. 非回溯模式下推送到消费者队列
-        3. 生成回复全量扫描任务
+        3. 生成回复全量扫描任务（携带元数据用于延迟更新）
 
         Args:
             threads_data: aiotieba返回的Threads对象。
@@ -171,19 +203,23 @@ class ThreadsTaskHandler(TaskHandler):
 
         await self.ensure_users(new_threads)
 
-        new_thread_models = [Thread.from_dto(t) for t in new_threads]
-        await self.datastore.save_items(new_thread_models)
-        self.log.debug("Saved {} new threads to DB.", len(new_threads))
-
         priority = Priority.BACKFILL if backfill else Priority.MEDIUM
 
         for thread in new_threads:
+            lock_key = f"tieba:scrapper:lock:tid:{thread.tid}"
+            if not await self.try_acquire_lock(lock_key):
+                continue
+
             if not backfill:
                 await self.datastore.push_to_id_queue("thread", thread.tid)
                 await self.datastore.push_object_event("thread", thread)
                 self.log.debug("Pushed new thread tid={} to ID queue or object stream.", thread.tid)
 
-            new_task_content = FullScanPostsTask(tid=thread.tid, backfill=backfill)
+            new_task_content = FullScanPostsTask(
+                tid=thread.tid,
+                backfill=backfill,
+                thread_dto=thread,
+            )
             await self.queue.put(Task(priority=priority, content=new_task_content))
             self.log.info("[{}吧] Scheduled FullScanPostsTask for new tid={}", thread.fname, thread.tid)
 
@@ -193,8 +229,7 @@ class ThreadsTaskHandler(TaskHandler):
         主要流程：
         1. 对比已存储的主题贴的最后回复时间，检查是否有更新
         2. 如果有更新，生成增量扫描任务
-        3. 更新数据库中该主题贴的reply_num值
-        4. 生成回复增量扫描任务
+        3. 生成回复增量扫描任务（携带元数据用于延迟更新）
 
         Args:
             threads_data: aiotieba返回的Threads对象。
@@ -207,26 +242,29 @@ class ThreadsTaskHandler(TaskHandler):
         stored_threads = await self.datastore.get_threads_by_tids(old_tids)
         stored_threads_map = {t.tid: t for t in stored_threads}
 
-        thread_to_update = []
-
         priority = Priority.BACKFILL if backfill else Priority.HIGH
 
         for thread_data in old_threads:
             stored_thread = stored_threads_map.get(thread_data.tid)
             if stored_thread and thread_data.last_time > stored_thread.last_time:
+                lock_key = f"tieba:scrapper:lock:tid:{thread_data.tid}"
+                if not await self.try_acquire_lock(lock_key):
+                    continue
+
                 self.log.debug(
                     "Thread tid={} has updates. Reply count: {} -> {}",
                     thread_data.tid,
                     stored_thread.reply_num,
                     thread_data.reply_num,
                 )
-                thread_to_update.append(thread_data)
 
                 update_task_content = IncrementalScanPostsTask(
                     tid=thread_data.tid,
                     last_time=thread_data.last_time,
                     last_floor=stored_thread.reply_num,
                     backfill=backfill,
+                    target_last_time=thread_data.last_time,
+                    target_reply_num=thread_data.reply_num,
                 )
                 await self.queue.put(Task(priority=priority, content=update_task_content))
                 self.log.info(
@@ -234,10 +272,6 @@ class ThreadsTaskHandler(TaskHandler):
                     thread_data.fname,
                     thread_data.tid,
                 )
-
-        if thread_to_update:
-            thread_models = [Thread.from_dto(t) for t in thread_to_update]
-            await self.datastore.save_items(thread_models, upsert=True)
 
 
 class FullScanPostsTaskHandler(TaskHandler):
@@ -251,6 +285,7 @@ class FullScanPostsTaskHandler(TaskHandler):
 
         主要流程：
         从第一页逐页扫描并处理主题贴的回复内容，直至has_more为False。
+        任务完成后，更新主题贴的元数据到数据库。
 
         Args:
             task_content: ScanPostsTask实例，包含主题贴tid和每页条目数量。
@@ -275,14 +310,14 @@ class FullScanPostsTaskHandler(TaskHandler):
 
                 if not page or not page.objs:
                     self.log.debug("No posts found for tid={}, pn={}. Task finished.", tid, pn)
-                    return
+                    break
 
                 await self._process_posts_on_page(tid, page, backfill)
                 processed_num += len(page.objs)
 
                 if not page.page.has_more:
                     self.log.debug("All pages processed for tid={}. Task finished.", tid)
-                    return
+                    break
 
                 if processed_num >= self.batch_size:
                     await asyncio.sleep(0)
@@ -290,8 +325,16 @@ class FullScanPostsTaskHandler(TaskHandler):
 
                 pn += 1
 
+            # 任务完成后更新元数据
+            if task_content.thread_dto:
+                t_model = Thread.from_dto(task_content.thread_dto)
+                await self.datastore.save_items([t_model], upsert=True)
+                self.log.debug("Updated thread metadata for tid={} after full scan.", tid)
+
         except Exception as e:
             self.log.exception("Failed to process ScanThreadTask for tid={}: {}", tid, e)
+        finally:
+            await self.release_lock(f"tieba:scrapper:lock:tid:{tid}")
 
     async def _process_posts_on_page(self, tid: int, posts_page: PostsDTO, backfill: bool):
         """处理单个页面上的所有回复。
@@ -343,6 +386,7 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
         主要流程：
         1. 通过pn=0xFFFF获取最新一页数据
         2. 从最新一页的总页数开始，逐页倒序扫描主题贴的所有回复内容
+        3. 任务完成后，更新主题贴的元数据到数据库。
 
         Args:
             task_content: IncrementalScanPostsTask实例，包含主题贴tid和已知回复数。
@@ -375,8 +419,18 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
             await self._scan_thread_pages(tid, start_pn, rn, last_time, last_floor, latest_page, backfill)
 
             self.log.debug("Finished incremental scan for tid={}.", tid)
+
+            # 任务完成后更新元数据
+            if task_content.target_last_time and task_content.target_reply_num is not None:
+                await self.datastore.update_thread_metadata(
+                    tid, task_content.target_last_time, task_content.target_reply_num
+                )
+                self.log.debug("Updated thread metadata for tid={} after incremental scan.", tid)
+
         except Exception as e:
             self.log.exception("Failed to process IncrementalScanPostsTask for tid={}: {}", tid, e)
+        finally:
+            await self.release_lock(f"tieba:scrapper:lock:tid:{tid}")
 
     async def _scan_thread_pages(
         self,
@@ -851,6 +905,7 @@ class Worker:
     """
 
     _datastore: ClassVar[DataStore | None] = None
+    _memory_locks: ClassVar[dict[str, float]] = {}
 
     def __init__(self, worker_id: int, queue: PriorityQueue, container: Container):
         self.worker_id = worker_id

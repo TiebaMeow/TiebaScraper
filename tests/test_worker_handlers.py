@@ -10,18 +10,16 @@ from tiebameow.models.dto import (
     BaseThreadDTO,
     PageInfoDTO,
     PostDTO,
-    PostsDTO,
     PostUserDTO,
     ThreadDTO,
     ThreadsDTO,
     ThreadUserDTO,
 )
 from tiebameow.models.orm import Post as PostModel
-from tiebameow.models.orm import Thread as ThreadModel
 from tiebameow.schemas.fragments import Fragment, FragTextModel
 
 from src.scraper.tasks import FullScanPostsTask, ScanThreadsTask, Task
-from src.scraper.worker import FullScanPostsTaskHandler, ThreadsTaskHandler
+from src.scraper.worker import FullScanPostsTaskHandler, ThreadsTaskHandler, Worker
 
 
 def make_user(dto_class, **overrides):
@@ -100,6 +98,7 @@ def _drain_queue(queue):
 
 @pytest.mark.asyncio
 async def test_threads_handler_new_threads_schedule_and_push():
+    Worker._memory_locks.clear()
     thread = make_thread()
     page_info = PageInfoDTO(page_size=30, current_page=1, total_page=1, total_count=1, has_more=False, has_prev=False)
     forum = BaseForumDTO(fid=thread.fid, fname=thread.fname)
@@ -116,20 +115,21 @@ async def test_threads_handler_new_threads_schedule_and_push():
     queue: asyncio.PriorityQueue[Task] = asyncio.PriorityQueue()
     handler = ThreadsTaskHandler(
         worker_id=0,
-        container=cast("Any", SimpleNamespace(tb_client=tb_client)),
+        container=cast("Any", SimpleNamespace(tb_client=tb_client, redis_client=None)),
         datastore=cast("Any", datastore),
         queue=queue,
     )
 
     await handler.handle(ScanThreadsTask(fid=thread.fid, fname=thread.fname, pn=1))
 
-    thread_save_calls = [
-        call.args[0]
-        for call in datastore.save_items.await_args_list
-        if call.args and isinstance(call.args[0], list) and call.args[0] and isinstance(call.args[0][0], ThreadModel)
-    ]
-    assert thread_save_calls, "Expected thread models to be persisted for new threads"
-    assert thread_save_calls[0][0].tid == thread.tid
+    # We no longer save threads immediately in ThreadsTaskHandler (optimistic update removed)
+    # thread_save_calls = [
+    #     call.args[0]
+    #     for call in datastore.save_items.await_args_list
+    #     if call.args and isinstance(call.args[0], list) and call.args[0] and isinstance(call.args[0][0], ThreadModel)
+    # ]
+    # assert thread_save_calls, "Expected thread models to be persisted for new threads"
+    # assert thread_save_calls[0][0].tid == thread.tid
 
     datastore.push_to_id_queue.assert_awaited_once_with("thread", thread.tid)
     datastore.push_object_event.assert_awaited_once_with("thread", thread)
@@ -140,6 +140,7 @@ async def test_threads_handler_new_threads_schedule_and_push():
 
 @pytest.mark.asyncio
 async def test_threads_handler_backfill_enqueues_next_page_when_has_more_false():
+    Worker._memory_locks.clear()
     thread = make_thread()
     page_info = PageInfoDTO(page_size=30, current_page=1, total_page=2, total_count=60, has_more=False, has_prev=False)
     forum = BaseForumDTO(fid=thread.fid, fname=thread.fname)
@@ -156,7 +157,7 @@ async def test_threads_handler_backfill_enqueues_next_page_when_has_more_false()
     queue: asyncio.PriorityQueue[Task] = asyncio.PriorityQueue()
     handler = ThreadsTaskHandler(
         worker_id=0,
-        container=cast("Any", SimpleNamespace(tb_client=tb_client)),
+        container=cast("Any", SimpleNamespace(tb_client=tb_client, redis_client=None)),
         datastore=cast("Any", datastore),
         queue=queue,
     )
@@ -203,10 +204,13 @@ def make_post(
 
 @pytest.mark.asyncio
 async def test_full_scan_posts_handler_process_page():
+    Worker._memory_locks.clear()
     post = make_post()
     page_info = PageInfoDTO(page_size=30, current_page=1, total_page=1, total_count=1, has_more=False, has_prev=False)
     forum = BaseForumDTO(fid=post.fid, fname=post.fname)
-    posts_response = PostsDTO(objs=[post], page=page_info, forum=forum)
+
+    # Use SimpleNamespace to simulate PostsDTO with 'thread' attribute
+    posts_response = SimpleNamespace(objs=[post], page=page_info, forum=forum, thread=None)
 
     tb_client = SimpleNamespace(get_posts_dto=AsyncMock(return_value=posts_response))
     datastore = SimpleNamespace(
@@ -218,7 +222,7 @@ async def test_full_scan_posts_handler_process_page():
     queue: asyncio.PriorityQueue[Task] = asyncio.PriorityQueue()
     handler = FullScanPostsTaskHandler(
         worker_id=0,
-        container=cast("Any", SimpleNamespace(tb_client=tb_client)),
+        container=cast("Any", SimpleNamespace(tb_client=tb_client, redis_client=None)),
         datastore=cast("Any", datastore),
         queue=queue,
     )

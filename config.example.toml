@@ -7,6 +7,8 @@ forums = [
 ]
 # 历史回溯模式最大页数
 max_backfill_pages = 100
+# 是否在回溯模式中强制扫描所有贴子
+backfill_force_scan = false
 
 # 贴吧分组配置（可选）
 # 如果配置了分组，该组内的贴吧将使用独立的调度周期

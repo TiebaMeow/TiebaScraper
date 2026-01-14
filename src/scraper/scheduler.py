@@ -184,6 +184,7 @@ class Scheduler:
             backfill=True,
             max_pages=max_pages,
             is_good=is_good,
+            force=self.container.config.backfill_force_scan,
         )
         task = Task(priority=Priority.BACKFILL, content=task_content)
         await self.queue.put(task)

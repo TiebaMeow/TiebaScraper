@@ -6,6 +6,8 @@ forums = [
 ]
 # 历史回溯模式最大页数
 max_backfill_pages = 100
+# 是否在回溯模式中强制扫描所有贴子
+backfill_force_scan = false
 
 # （可选）分组配置
 # [[tieba.groups]]

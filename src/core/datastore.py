@@ -19,6 +19,8 @@ from tiebameow.utils.logger import logger
 from .publisher import EventEnvelope, NoopPublisher, RedisStreamsPublisher, WebSocketPublisher, build_envelope
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from tiebameow.models.dto import CommentDTO, PostDTO, ThreadDTO
 
     from .container import Container
@@ -339,3 +341,12 @@ class DataStore:
 
         envelope: EventEnvelope = build_envelope(item_type, obj, event_type=event_type, backfill=backfill)
         await self.publisher.publish_object(envelope)
+
+    async def update_thread_metadata(self, tid: int, last_time: datetime, reply_num: int) -> None:
+        """更新主题贴的元数据（最后回复时间和回复数）。"""
+        from sqlalchemy import update
+
+        async with self.get_session() as session:
+            stmt = update(Thread).where(Thread.tid == tid).values(last_time=last_time, reply_num=reply_num)
+            await session.execute(stmt)
+            await session.commit()

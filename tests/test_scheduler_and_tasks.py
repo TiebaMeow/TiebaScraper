@@ -15,12 +15,24 @@ class DummyConfig:
     max_backfill_pages: int = 5
     default_forums: list[str] | None = None
     groups: list | None = None
+    pydantic_config: object = None
 
     def __post_init__(self):
         if self.default_forums is None:
             self.default_forums = ["bar", "baz"]  # Default list for tests
         if self.groups is None:
             self.groups = []
+
+        # Mocking the structure of pydantic_config.tieba.backfill_force_scan
+        if self.pydantic_config is None:
+
+            class Tieba:
+                backfill_force_scan = False
+
+            class PydanticConfig:
+                tieba = Tieba()
+
+            self.pydantic_config = PydanticConfig()
 
 
 @dataclass
