@@ -24,30 +24,36 @@ class UniquePriorityQueue(asyncio.PriorityQueue):
 
     def __init__(self, maxsize: int = 0):
         super().__init__(maxsize)
-        self._unique_set: set[Task] = set()
+        self._unique_set: set[tuple[int, object]] = set()
+
+    def _get_unique_key(self, item: Task) -> tuple[int, object]:
+        """生成任务的唯一标识键。"""
+        return (item.priority, item.content)
 
     def put_nowait(self, item: Task):
         """非阻塞入队，带去重检查。"""
-        if item in self._unique_set:
+        unique_key = self._get_unique_key(item)
+        if unique_key in self._unique_set:
             return
 
-        self._unique_set.add(item)
+        self._unique_set.add(unique_key)
         try:
             super().put_nowait(item)
         except Exception:
-            self._unique_set.discard(item)
+            self._unique_set.discard(unique_key)
             raise
 
     async def put(self, item: Task):
         """阻塞入队，带去重检查。"""
-        if item in self._unique_set:
+        unique_key = self._get_unique_key(item)
+        if unique_key in self._unique_set:
             return
 
-        self._unique_set.add(item)
+        self._unique_set.add(unique_key)
         try:
             await super().put(item)
         except Exception:
-            self._unique_set.discard(item)
+            self._unique_set.discard(unique_key)
             raise
 
     def _get(self):
@@ -56,6 +62,10 @@ class UniquePriorityQueue(asyncio.PriorityQueue):
         asyncio.Queue 的 get() 和 get_nowait() 最终都会调用此方法取数据。
         """
         item = super()._get()
-        self._unique_set.discard(item)
+        try:
+            unique_key = self._get_unique_key(item)
+            self._unique_set.discard(unique_key)
+        except Exception:
+            pass
 
         return item
