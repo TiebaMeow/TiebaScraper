@@ -6,20 +6,20 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Literal
 
 from sqlalchemy import select, text
 from tiebameow.models.orm import Base, Forum
 from tiebameow.utils.logger import logger
 
+from ..scraper.queue import UniquePriorityQueue
 from .config import Config
 from .container import Container
 
 
 async def initialize_application(
     mode: Literal["periodic", "backfill", "hybrid"],
-) -> tuple[Container, asyncio.PriorityQueue]:
+) -> tuple[Container, UniquePriorityQueue]:
     """初始化整个应用程序。
 
     该函数封装了应用启动所需的所有核心初始化步骤：
@@ -46,7 +46,7 @@ async def initialize_application(
 
     await initialize_forums(container)
 
-    task_queue = asyncio.PriorityQueue(maxsize=10000)
+    task_queue = UniquePriorityQueue(maxsize=0)
 
     logger.info("Application initialized successfully.")
     return container, task_queue
