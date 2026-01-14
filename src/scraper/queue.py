@@ -25,11 +25,14 @@ class UniquePriorityQueue:
 
     def __init__(self, maxsize: int = 0):
         self._q = asyncio.PriorityQueue(maxsize=maxsize)
-        self._unique_set: set[tuple[int, object]] = set()
+        self._unique_set: set[tuple[int, str, object]] = set()
 
-    def _get_unique_key(self, item: Task) -> tuple[int, object]:
-        """生成任务的唯一标识键。"""
-        return (item.priority, item.content)
+    def _get_unique_key(self, item: Task) -> tuple[int, str, object]:
+        """生成任务的唯一标识键。
+
+        直接调用 Task 对象的 unique_key 属性获取唯一标识。
+        """
+        return item.unique_key
 
     def qsize(self) -> int:
         return self._q.qsize()

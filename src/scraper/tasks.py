@@ -51,6 +51,12 @@ class Task:
         | DeepScanTask
     ) = dataclasses.field(compare=False)
 
+    @property
+    def unique_key(self) -> tuple[int, str, object]:
+        """获取任务的唯一标识键。"""
+        content = self.content
+        return (self.priority.value, type(content).__name__, content.unique_key)
+
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class ScanThreadsTask:
@@ -76,6 +82,10 @@ class ScanThreadsTask:
     max_pages: int = 100
     force: bool = False
 
+    @property
+    def unique_key(self) -> tuple[int, int, bool]:
+        return (self.fid, self.pn, self.is_good)
+
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class FullScanPostsTask:
@@ -92,6 +102,10 @@ class FullScanPostsTask:
     rn: int = 30
     backfill: bool = False
     thread_dto: ThreadDTO | None = None
+
+    @property
+    def unique_key(self) -> int:
+        return self.tid
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -116,6 +130,10 @@ class IncrementalScanPostsTask:
     target_last_time: datetime | None = None
     target_reply_num: int | None = None
 
+    @property
+    def unique_key(self) -> int:
+        return self.tid
+
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class FullScanCommentsTask:
@@ -130,6 +148,10 @@ class FullScanCommentsTask:
     tid: int
     pid: int
     backfill: bool = False
+
+    @property
+    def unique_key(self) -> tuple[int, int]:
+        return (self.tid, self.pid)
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -146,6 +168,10 @@ class IncrementalScanCommentsTask:
     pid: int
     backfill: bool = False
 
+    @property
+    def unique_key(self) -> tuple[int, int]:
+        return (self.tid, self.pid)
+
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class DeepScanTask:
@@ -160,3 +186,7 @@ class DeepScanTask:
     tid: int
     pid: int
     depth: int = 10
+
+    @property
+    def unique_key(self) -> tuple[int, int]:
+        return (self.tid, self.pid)
