@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from .tasks import Task
 
 
-class UniquePriorityQueue(asyncio.PriorityQueue):
+class UniquePriorityQueue:
     """带去重功能的优先级队列。
 
     该队列维护一个已入队任务的集合，在入队时检查是否已存在相同任务（相同优先级和内容）。
@@ -20,15 +20,25 @@ class UniquePriorityQueue(asyncio.PriorityQueue):
 
     Attributes:
         _unique_set: 存储已入队任务的唯一标识集合。
+        _q: 内部 asyncio.PriorityQueue
     """
 
     def __init__(self, maxsize: int = 0):
-        super().__init__(maxsize)
+        self._q = asyncio.PriorityQueue(maxsize=maxsize)
         self._unique_set: set[tuple[int, object]] = set()
 
     def _get_unique_key(self, item: Task) -> tuple[int, object]:
         """生成任务的唯一标识键。"""
         return (item.priority, item.content)
+
+    def qsize(self) -> int:
+        return self._q.qsize()
+
+    def empty(self) -> bool:
+        return self._q.empty()
+
+    def full(self) -> bool:
+        return self._q.full()
 
     def put_nowait(self, item: Task):
         """非阻塞入队，带去重检查。"""
@@ -38,7 +48,7 @@ class UniquePriorityQueue(asyncio.PriorityQueue):
 
         self._unique_set.add(unique_key)
         try:
-            super().put_nowait(item)
+            self._q.put_nowait(item)
         except Exception:
             self._unique_set.discard(unique_key)
             raise
@@ -51,21 +61,32 @@ class UniquePriorityQueue(asyncio.PriorityQueue):
 
         self._unique_set.add(unique_key)
         try:
-            await super().put(item)
+            await self._q.put(item)
         except Exception:
             self._unique_set.discard(unique_key)
             raise
 
-    def _get(self):
-        """
-        重写内部方法 _get。
-        asyncio.Queue 的 get() 和 get_nowait() 最终都会调用此方法取数据。
-        """
-        item = super()._get()
+    async def get(self) -> Task:
+        """获取任务，并从去重集合中移除。"""
+        item = await self._q.get()
         try:
             unique_key = self._get_unique_key(item)
             self._unique_set.discard(unique_key)
         except Exception:
             pass
-
         return item
+
+    def get_nowait(self) -> Task:
+        item = self._q.get_nowait()
+        try:
+            unique_key = self._get_unique_key(item)
+            self._unique_set.discard(unique_key)
+        except Exception:
+            pass
+        return item
+
+    def task_done(self):
+        self._q.task_done()
+
+    async def join(self):
+        await self._q.join()
