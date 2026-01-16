@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import dataclasses
+import itertools
+import time
 from enum import IntEnum
 from typing import TYPE_CHECKING
 
@@ -32,13 +34,24 @@ class Priority(IntEnum):
     BACKFILL = 4  # BackfillTasks
 
 
-@dataclasses.dataclass(order=True, slots=True, frozen=True)
+# 全局序列号生成器
+_sequence_counter = itertools.count()
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
 class Task:
     """放入优先级队列的任务对象。
+
+    任务按以下顺序排序：
+    1. 优先级（数值越小优先级越高）
+    2. 创建时间（越早创建越先出队）
+    3. 序列号（确保相同优先级和创建时间的任务有唯一排序）
 
     Attributes:
         priority: 任务优先级
         content: 任务内容对象
+        timestamp: 任务创建时间戳（自动设置）
+        sequence_number: 全局递增序列号（自动设置）
     """
 
     priority: Priority
@@ -50,6 +63,58 @@ class Task:
         | IncrementalScanCommentsTask
         | DeepScanTask
     ) = dataclasses.field(compare=False)
+    timestamp: float = dataclasses.field(init=False)
+    sequence_number: int = dataclasses.field(init=False)
+
+    def __post_init__(self):
+        """自动初始化创建时间和序列号。"""
+        object.__setattr__(self, "timestamp", time.time())
+        object.__setattr__(self, "sequence_number", next(_sequence_counter))
+
+    def __lt__(self, other):
+        if not isinstance(other, Task):
+            return NotImplemented
+        return (self.priority.value, self.timestamp, self.sequence_number) < (
+            other.priority.value,
+            other.timestamp,
+            other.sequence_number,
+        )
+
+    def __le__(self, other):
+        if not isinstance(other, Task):
+            return NotImplemented
+        return (self.priority.value, self.timestamp, self.sequence_number) <= (
+            other.priority.value,
+            other.timestamp,
+            other.sequence_number,
+        )
+
+    def __eq__(self, other):
+        if not isinstance(other, Task):
+            return NotImplemented
+        return (self.priority.value, self.timestamp, self.sequence_number) == (
+            other.priority.value,
+            other.timestamp,
+            other.sequence_number,
+        )
+
+    def __gt__(self, other):
+        if not isinstance(other, Task):
+            return NotImplemented
+        return (self.priority.value, self.timestamp, self.sequence_number) > (
+            other.priority.value,
+            other.timestamp,
+            other.sequence_number,
+        )
+
+    def __ge__(self, other):
+        if not isinstance(other, Task):
+            return NotImplemented
+        return (self.priority.value, self.timestamp, self.sequence_number) >= (
+            other.priority.value,
+            other.timestamp,
+            other.sequence_number,
+        )
 
     @property
     def unique_key(self) -> tuple[int, str, object]:
