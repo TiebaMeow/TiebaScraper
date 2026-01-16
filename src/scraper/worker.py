@@ -210,18 +210,23 @@ class ThreadsTaskHandler(TaskHandler):
             if not await self.try_acquire_lock(lock_key):
                 continue
 
-            if not backfill:
-                await self.datastore.push_to_id_queue("thread", thread.tid)
-                await self.datastore.push_object_event("thread", thread)
-                self.log.debug("Pushed new thread tid={} to ID queue or object stream.", thread.tid)
+            try:
+                if not backfill:
+                    await self.datastore.push_to_id_queue("thread", thread.tid)
+                    await self.datastore.push_object_event("thread", thread)
+                    self.log.debug("Pushed new thread tid={} to ID queue or object stream.", thread.tid)
 
-            new_task_content = FullScanPostsTask(
-                tid=thread.tid,
-                backfill=backfill,
-                thread_dto=thread,
-            )
-            await self.queue.put(Task(priority=priority, content=new_task_content))
-            self.log.info("[{}吧] Scheduled FullScanPostsTask for new tid={}", thread.fname, thread.tid)
+                new_task_content = FullScanPostsTask(
+                    tid=thread.tid,
+                    backfill=backfill,
+                    thread_dto=thread,
+                )
+                await self.queue.put(Task(priority=priority, content=new_task_content))
+                self.log.info("[{}吧] Scheduled FullScanPostsTask for new tid={}", thread.fname, thread.tid)
+            except Exception as e:
+                # 如果任务生成失败，释放锁以避免锁泄漏
+                await self.release_lock(lock_key)
+                self.log.exception("Failed to schedule FullScanPostsTask for tid={}: {}", thread.tid, e)
 
     async def _process_old_threads(self, threads_data: ThreadsDTO, old_tids: set[int], backfill: bool):
         """处理已存在的主题贴，检查是否有更新。
@@ -251,27 +256,37 @@ class ThreadsTaskHandler(TaskHandler):
                 if not await self.try_acquire_lock(lock_key):
                     continue
 
-                self.log.debug(
-                    "Thread tid={} has updates. Reply count: {} -> {}",
-                    thread_data.tid,
-                    stored_thread.reply_num,
-                    thread_data.reply_num,
-                )
+                try:
+                    self.log.debug(
+                        "Thread tid={} has updates. Reply count: {} -> {}",
+                        thread_data.tid,
+                        stored_thread.reply_num,
+                        thread_data.reply_num,
+                    )
 
-                update_task_content = IncrementalScanPostsTask(
-                    tid=thread_data.tid,
-                    last_time=thread_data.last_time,
-                    last_floor=stored_thread.reply_num,
-                    backfill=backfill,
-                    target_last_time=thread_data.last_time,
-                    target_reply_num=thread_data.reply_num,
-                )
-                await self.queue.put(Task(priority=priority, content=update_task_content))
-                self.log.info(
-                    "[{}吧] Scheduled IncrementalScanPostsTask for updated tid={}",
-                    thread_data.fname,
-                    thread_data.tid,
-                )
+                    update_task_content = IncrementalScanPostsTask(
+                        tid=thread_data.tid,
+                        last_time=thread_data.last_time,
+                        last_floor=stored_thread.reply_num,
+                        backfill=backfill,
+                        target_last_time=thread_data.last_time,
+                        target_reply_num=thread_data.reply_num,
+                    )
+                    await self.queue.put(Task(priority=priority, content=update_task_content))
+                    self.log.info(
+                        "[{}吧] Scheduled IncrementalScanPostsTask for updated tid={}",
+                        thread_data.fname,
+                        thread_data.tid,
+                    )
+                except Exception as e:
+                    self.log.exception(
+                        "Failed to schedule IncrementalScanPostsTask for tid={}: {}",
+                        thread_data.tid,
+                        e,
+                    )
+                    raise
+                finally:
+                    await self.release_lock(lock_key)
 
 
 class FullScanPostsTaskHandler(TaskHandler):
