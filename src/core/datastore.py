@@ -152,11 +152,16 @@ class DataStore:
         if not ids_after_cache:
             return set()
 
-        # 第二层：数据库查重过滤
-        ids_after_db = await self._filter_by_database(item_type, list(ids_after_cache))
+        # 第二层：数据库查重过滤（在事务中执行，确保一致性）
+        try:
+            ids_after_db = await self._filter_by_database(item_type, list(ids_after_cache))
+        except Exception as e:
+            # 如果数据库查询失败，不标记缓存，避免缓存和数据库状态不一致
+            logger.exception("Database filter failed for {}: {}", item_type, e)
+            raise
 
-        # 将新ID标记为已处理
-        await self._mark_as_processed(item_type, ids_after_db)
+        if ids_after_db is not None:
+            await self._mark_as_processed(item_type, ids_after_db)
 
         return ids_after_db
 
@@ -187,6 +192,7 @@ class DataStore:
         """数据库查重过滤
 
         根据item_type从数据库中查询已存在的ID，并返回未存在的ID集合。
+
         Args:
             item_type: 数据项类型，可选值为'thread'、'post'、'comment'或'user'。
             ids: 需要检查的ID列表。
@@ -214,7 +220,7 @@ class DataStore:
 
         if existing_ids:
             logger.debug("Database filter: Found {} existing IDs for {}", len(existing_ids), item_type)
-            await self._mark_as_processed(item_type, existing_ids)
+            # 标记缓存由 filter_new_ids 统一处理
 
         new_ids = set(ids) - existing_ids
         logger.debug(
