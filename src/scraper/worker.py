@@ -22,6 +22,7 @@ from asyncio import PriorityQueue
 from typing import TYPE_CHECKING, ClassVar
 
 from aiotieba.enums import PostSortType
+from tiebameow.client.tieba_client import UnretriableApiError
 from tiebameow.models.orm import Comment, Post, Thread, User
 from tiebameow.utils.logger import logger
 
@@ -346,6 +347,17 @@ class FullScanPostsTaskHandler(TaskHandler):
                 await self.datastore.save_items([t_model], upsert=True)
                 self.log.debug("Updated thread metadata for tid={} after full scan.", tid)
 
+        except UnretriableApiError as e:
+            if e.code == 4:
+                self.log.warning(
+                    "Thread tid={} may have been deleted (err_code=4). Saving thread metadata from previous crawl.", tid
+                )
+                if task_content.thread_dto:
+                    t_model = Thread.from_dto(task_content.thread_dto)
+                    await self.datastore.save_items([t_model], upsert=True)
+                    self.log.debug("Updated thread metadata for tid={} after deletion detected.", tid)
+            else:
+                self.log.exception("Failed to process ScanThreadTask for tid={}: {}", tid, e)
         except Exception as e:
             self.log.exception("Failed to process ScanThreadTask for tid={}: {}", tid, e)
         finally:
