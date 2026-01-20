@@ -179,8 +179,8 @@ class IncrementalScanPostsTask:
 
     Attributes:
         tid: 主题贴tid
-        last_time: 上次扫描的最后回复时间戳
-        last_floor: 上次扫描的最后楼层，默认为1
+        stored_last_time: 数据库中存储的最后回复时间戳（用于判断停止扫描）
+        stored_reply_num: 数据库中存储的回复数（用于计算 DeepScan 期望值）
         rn: 每页条目数量，默认为30
         backfill: 是否为回溯任务，默认为False
         target_last_time: 期望更新到的最后回复时间（用于任务完成后更新DB）
@@ -188,8 +188,8 @@ class IncrementalScanPostsTask:
     """
 
     tid: int
-    last_time: datetime
-    last_floor: int = 1
+    stored_last_time: datetime
+    stored_reply_num: int = 0
     rn: int = 30
     backfill: bool = False
     target_last_time: datetime | None = None
@@ -240,18 +240,23 @@ class IncrementalScanCommentsTask:
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class DeepScanTask:
-    """深度扫描单个贴子下的楼中楼。
+    """深度扫描主题贴内深处的楼中楼。
+
+    扫描主题贴的前 depth 页和后 depth 页回复，检查这些回复的楼中楼更新。
+    用于补偿增量扫描无法覆盖的"深处"楼中楼更新。
 
     Attributes:
         tid: 主题贴tid
-        pid: 回复pid
-        depth: 页码扫描深度，默认为10
+        total_pages: 主题贴总页数
+        depth: 页码扫描深度，扫描前 n 页 + 后 n 页回复，默认为3
+        expected_new_comments: 期望找到的新楼中楼数量（至少为1）
     """
 
     tid: int
-    pid: int
-    depth: int = 10
+    total_pages: int
+    depth: int = 3
+    expected_new_comments: int = 1
 
     @property
-    def unique_key(self) -> tuple[int, int]:
-        return (self.tid, self.pid)
+    def unique_key(self) -> int:
+        return self.tid

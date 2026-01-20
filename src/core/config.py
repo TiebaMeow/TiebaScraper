@@ -93,6 +93,13 @@ class SchedulerConfig(BaseModel):
     good_page_every_n_ticks: int = Field(10, gt=0)
 
 
+class DeepScanConfig(BaseModel):
+    """DeepScan 深度扫描配置模型"""
+
+    enabled: bool = False
+    depth: int = Field(3, gt=0, description="扫描前 n 页 + 后 n 页")
+
+
 class WebSocketConfig(BaseModel):
     """WebSocket 模式配置"""
 
@@ -137,6 +144,7 @@ class PydanticConfig(BaseSettings):
     scheduler: SchedulerConfig = Field(
         default_factory=lambda: SchedulerConfig(interval_seconds=60, good_page_every_n_ticks=10)
     )
+    deep_scan: DeepScanConfig = Field(default_factory=lambda: DeepScanConfig(enabled=False, depth=3))
     websocket: WebSocketConfig = Field(
         default_factory=lambda: WebSocketConfig(enabled=True, host="localhost", port=8000)
     )
@@ -329,6 +337,16 @@ class Config:
     def good_page_every_ticks(self) -> int:
         """获取调度器调度优质页的频率。"""
         return self.pydantic_config.scheduler.good_page_every_n_ticks
+
+    @property
+    def deep_scan_enabled(self) -> bool:
+        """获取是否启用 DeepScan 深度扫描。"""
+        return self.pydantic_config.deep_scan.enabled
+
+    @property
+    def deep_scan_depth(self) -> int:
+        """获取 DeepScan 深度扫描的页数深度。"""
+        return self.pydantic_config.deep_scan.depth
 
     @property
     def websocket_url(self) -> WebsocketUrl:

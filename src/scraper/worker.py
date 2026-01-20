@@ -28,6 +28,7 @@ from tiebameow.utils.logger import logger
 
 from ..core import Container, DataStore
 from .tasks import (
+    DeepScanTask,
     FullScanCommentsTask,
     FullScanPostsTask,
     IncrementalScanCommentsTask,
@@ -267,8 +268,8 @@ class ThreadsTaskHandler(TaskHandler):
 
                     update_task_content = IncrementalScanPostsTask(
                         tid=thread_data.tid,
-                        last_time=thread_data.last_time,
-                        last_floor=stored_thread.reply_num,
+                        stored_last_time=stored_thread.last_time,
+                        stored_reply_num=stored_thread.reply_num,
                         backfill=backfill,
                         target_last_time=thread_data.last_time,
                         target_reply_num=thread_data.reply_num,
@@ -414,13 +415,14 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
         1. 通过pn=0xFFFF获取最新一页数据
         2. 从最新一页的总页数开始，逐页倒序扫描主题贴的所有回复内容
         3. 任务完成后，更新主题贴的元数据到数据库。
+        4. 如果未找到新内容且 DeepScan 已启用，触发深度扫描。
 
         Args:
-            task_content: IncrementalScanPostsTask实例，包含主题贴tid和已知回复数。
+            task_content: IncrementalScanPostsTask实例，包含主题贴tid和存储的元数据。
         """
         tid = task_content.tid
-        last_time = task_content.last_time
-        last_floor = task_content.last_floor
+        stored_last_time = task_content.stored_last_time
+        stored_reply_num = task_content.stored_reply_num
         rn = task_content.rn
         backfill = task_content.backfill
 
@@ -443,7 +445,9 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
 
             self.log.debug("Incremental scan for tid={}. Starting from page {}.", tid, start_pn)
 
-            await self._scan_thread_pages(tid, start_pn, rn, last_time, last_floor, latest_page, backfill)
+            found_new_content = await self._scan_thread_pages(
+                tid, start_pn, rn, stored_last_time, latest_page, backfill
+            )
 
             self.log.debug("Finished incremental scan for tid={}.", tid)
 
@@ -453,6 +457,24 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
                     tid, task_content.target_last_time, task_content.target_reply_num
                 )
                 self.log.debug("Updated thread metadata for tid={} after incremental scan.", tid)
+
+            if not found_new_content and not backfill and self.container.config.deep_scan_enabled:
+                expected_new = 1
+                if task_content.target_reply_num is not None:
+                    expected_new = max(1, task_content.target_reply_num - stored_reply_num)
+
+                self.log.info(
+                    "No new content found for tid={} during incremental scan. Triggering DeepScan (expected_new={}).",
+                    tid,
+                    expected_new,
+                )
+                deep_task = DeepScanTask(
+                    tid=tid,
+                    depth=self.container.config.deep_scan_depth,
+                    total_pages=start_pn,
+                    expected_new_comments=expected_new,
+                )
+                await self.queue.put(Task(priority=Priority.LOW, content=deep_task))
 
         except Exception as e:
             self.log.exception("Failed to process IncrementalScanPostsTask for tid={}: {}", tid, e)
@@ -464,11 +486,10 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
         tid: int,
         start_pn: int,
         rn: int,
-        last_time: datetime,
-        last_floor: int,
+        stored_last_time: datetime,
         initial_page_data: PostsDTO,
         backfill: bool,
-    ):
+    ) -> bool:
         """倒序扫描主题贴回复页面。
 
         从指定的起始页开始，逐页倒序扫描主题贴的所有回复内容。
@@ -478,10 +499,15 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
             tid: 主题贴tid
             start_pn: 扫描起始页码
             rn: 每页条目数量
-            last_time: 上次扫描的最新回复时间戳
-            last_floor: 上次扫描的最新楼层
+            stored_last_time: 数据库中存储的最后回复时间戳（用于判断停止扫描）
             initial_page_data: 最新一页的数据
+            backfill: 是否为回溯任务
+
+        Returns:
+            bool: 是否在扫描过程中发现了任何新内容（新回复或新楼中楼更新）
         """
+        found_new_content = False
+
         for pn in range(start_pn, 0, -1):
             self.log.debug("Scanning tid={}, Posts page {}.", tid, pn)
 
@@ -501,7 +527,10 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
                 self.log.warning("No posts found on tid={}, pn={}. Skipping page.", tid, pn)
                 continue
 
-            has_more = await self._process_posts_on_page(last_time, last_floor, posts_page, backfill)
+            has_more, page_found_new = await self._process_posts_on_page(stored_last_time, posts_page, backfill)
+
+            if page_found_new:
+                found_new_content = True
 
             if not has_more:
                 self.log.debug("No new posts found on tid={}, pn={}. Stopping scan.", tid, pn)
@@ -519,11 +548,15 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
 
         if hot_page and hot_page.objs:
             self.log.debug("Hot posts for tid={} found on page 1. Processing hot posts.", tid)
-            await self._process_posts_on_page(last_time, last_floor, hot_page, backfill)
+            _, hot_found_new = await self._process_posts_on_page(stored_last_time, hot_page, backfill)
+            if hot_found_new:
+                found_new_content = True
+
+        return found_new_content
 
     async def _process_posts_on_page(
-        self, last_time: datetime, last_floor: int, posts_page: PostsDTO, backfill: bool
-    ) -> bool:
+        self, stored_last_time: datetime, posts_page: PostsDTO, backfill: bool
+    ) -> tuple[bool, bool]:
         """处理单个页面上的所有回复。
 
         主要流程：
@@ -534,13 +567,12 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
         5. 判断是否还有新回复需要继续扫描。
 
         Args:
-            pn: 页码
-            last_time: 上次扫描的最后回复时间戳
-            last_floor: 上次扫描的最后楼层
+            stored_last_time: 数据库中存储的最后回复时间戳（用于判断停止扫描）
             posts_page: 该页面的回复数据
+            backfill: 是否为回溯任务
 
         Returns:
-            bool: 是否还有新回复需要继续扫描
+            tuple[bool, bool]: (是否还有新回复需要继续扫描, 是否在本页发现了新内容)
         """
         posts = [p for p in posts_page.objs if p.floor != 1]
         all_pids_on_page = [p.pid for p in posts]
@@ -550,6 +582,8 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
         tid = posts_page.objs[0].tid if posts_page.objs else None
         current_page = posts_page.page.current_page
 
+        found_new_content = bool(new_pids)
+
         if not new_pids:
             if tid is not None:
                 self.log.debug(
@@ -557,7 +591,11 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
                     tid,
                     current_page,
                 )
-            return False
+            # 即使没有新回复，也检查旧回复的楼中楼更新
+            old_posts_had_updates = await self._process_old_posts(old_pids, posts, backfill)
+            if old_posts_had_updates:
+                found_new_content = True
+            return False, found_new_content
 
         if tid is not None:
             self.log.debug(
@@ -569,14 +607,16 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
 
         await self._process_new_posts(new_pids, posts, backfill)
 
-        await self._process_old_posts(old_pids, posts, backfill)
+        old_posts_had_updates = await self._process_old_posts(old_pids, posts, backfill)
+        if old_posts_had_updates:
+            found_new_content = True
 
         await self._process_attached_comments(posts)
 
-        if any(p.create_time < last_time or p.floor < last_floor for p in posts_page.objs):
-            return False
+        if any(p.create_time < stored_last_time for p in posts_page.objs):
+            return False, found_new_content
 
-        return True
+        return True, found_new_content
 
     async def _process_new_posts(self, new_pids: set[int], posts: list[PostDTO], backfill: bool):
         """处理新发现的回复。
@@ -619,7 +659,7 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
                     post.tid,
                 )
 
-    async def _process_old_posts(self, old_pids: set[int], posts: list[PostDTO], backfill: bool):
+    async def _process_old_posts(self, old_pids: set[int], posts: list[PostDTO], backfill: bool) -> bool:
         """处理已存在的回复，检查是否有更新。
 
         主要流程：
@@ -628,10 +668,14 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
 
         Args:
             old_pids: 已存在的回复的pid集合
-            posts_page: 该页面的回复数据
+            posts: 该页面的回复数据
+            backfill: 是否为回溯任务
+
+        Returns:
+            bool: 是否发现了楼中楼更新
         """
         if not old_pids:
-            return
+            return False
 
         old_posts = [p for p in posts if p.pid in old_pids]
         stored_posts = await self.datastore.get_posts_by_pids(old_pids)
@@ -667,6 +711,8 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
         if posts_to_update:
             post_models = [Post.from_dto(p) for p in posts_to_update]
             await self.datastore.save_items(post_models, upsert=True)
+
+        return bool(posts_to_update)
 
     async def _process_attached_comments(self, posts: list[PostDTO]):
         """处理回复附带的楼中楼。
@@ -911,6 +957,207 @@ class IncrementalScanCommentsTaskHandler(TaskHandler):
         return True
 
 
+class DeepScanTaskHandler(TaskHandler):
+    """深度扫描任务处理器。
+
+    用于补偿增量扫描无法覆盖的"深处"楼中楼更新。
+    扫描主题贴的前 depth 页和后 depth 页回复，检查这些回复的楼中楼更新。
+    """
+
+    async def handle(self, task_content: DeepScanTask):
+        """处理深度扫描任务。
+
+        主要流程：
+        1. 扫描前 depth 页（第 1 ~ depth 页）
+        2. 扫描后 depth 页（最后 depth 页）
+        3. 对每个页面上的回复，检查楼中楼是否有更新
+        4. 如果发现楼中楼有更新，生成 IncrementalScanCommentsTask
+
+        Args:
+            task_content: DeepScanTask 实例，包含主题贴 tid 和扫描深度。
+        """
+        tid = task_content.tid
+        depth = task_content.depth
+        expected_new_comments = task_content.expected_new_comments
+
+        try:
+            total_pages = task_content.total_pages
+            self.log.info(
+                "DeepScan started for tid={}, total_pages={}, depth={}.",
+                tid,
+                total_pages,
+                depth,
+            )
+
+            pages_to_scan = self._calculate_pages_to_scan(total_pages, depth)
+            if not pages_to_scan:
+                self.log.debug("DeepScan: No pages to scan for tid={}.", tid)
+                return
+
+            new_comments_found = await self._scan_pages_for_comments(tid, pages_to_scan, expected_new_comments)
+            self.log.info(
+                "DeepScan finished for tid={}. Found {} comment updates.",
+                tid,
+                new_comments_found,
+            )
+
+        except Exception as e:
+            self.log.exception("DeepScan failed for tid={}: {}", tid, e)
+
+    def _calculate_pages_to_scan(self, total_pages: int, depth: int) -> list[int]:
+        """计算需要扫描的页码列表。
+
+        扫描前 depth 页和后 depth 页，去除重复并排除已被增量扫描覆盖的最后一页。
+
+        Args:
+            total_pages: 主题贴总页数
+            depth: 扫描深度
+
+        Returns:
+            需要扫描的页码列表
+        """
+        front_pages = set(range(1, min(depth + 1, total_pages + 1)))
+        back_pages = {total_pages - i for i in range(1, depth + 1) if total_pages - i > 0}
+
+        return sorted(front_pages | back_pages)
+
+    async def _scan_pages_for_comments(self, tid: int, pages: list[int], expected_new_comments: int) -> int:
+        """扫描指定页码，检查回复的楼中楼更新。
+
+        Args:
+            tid: 主题贴 tid
+            pages: 要扫描的页码列表
+            expected_new_comments: 期望找到的新楼中楼数量，达到后提前停止
+
+        Returns:
+            发现的楼中楼更新数量
+        """
+        new_comments_found = 0
+
+        for pn in pages:
+            self.log.debug("DeepScan: Scanning tid={}, pn={}.", tid, pn)
+
+            posts_page = await self.container.tb_client.get_posts_dto(  # type: ignore
+                tid,
+                pn,
+                rn=30,
+                with_comments=True,
+                comment_sort_by_agree=False,
+                comment_rn=10,
+            )
+
+            if not posts_page or not posts_page.objs:
+                self.log.warning("DeepScan: No posts found on tid={}, pn={}.", tid, pn)
+                continue
+
+            updates = await self._check_posts_for_comment_updates(posts_page.objs)
+            new_comments_found += updates
+
+            if new_comments_found >= expected_new_comments:
+                self.log.info(
+                    "DeepScan: Found expected {} new comments for tid={}. Stopping early.",
+                    expected_new_comments,
+                    tid,
+                )
+                break
+
+        return new_comments_found
+
+    async def _check_posts_for_comment_updates(self, posts: list[PostDTO]) -> int:
+        """检查回复列表中的楼中楼更新。
+
+        先处理所有附带的楼中楼（可能存在删除+新增的边缘情况），
+        再根据 reply_num 判断是否需要额外的增量扫描任务。
+
+        Args:
+            posts: 回复列表
+
+        Returns:
+            发现的新楼中楼数量
+        """
+        posts_with_comments = [p for p in posts if p.floor != 1 and p.reply_num > 0]
+
+        if not posts_with_comments:
+            return 0
+
+        pids = [p.pid for p in posts_with_comments]
+        stored_posts = await self.datastore.get_posts_by_pids(set(pids))
+        stored_posts_map = {p.pid: p for p in stored_posts}
+
+        updates_found = 0
+        posts_to_update = []
+
+        for post in posts_with_comments:
+            stored_post = stored_posts_map.get(post.pid)
+
+            if not stored_post:
+                continue
+
+            if post.comments:
+                new_comments = await self._process_attached_comments(post)
+                updates_found += new_comments
+
+            if post.reply_num > stored_post.reply_num:
+                self.log.debug(
+                    "DeepScan: Post pid={} has comment updates. Reply count: {} -> {}",
+                    post.pid,
+                    stored_post.reply_num,
+                    post.reply_num,
+                )
+
+                if post.reply_num > 10 or len(post.comments) != post.reply_num:
+                    update_task = IncrementalScanCommentsTask(
+                        tid=post.tid,
+                        pid=post.pid,
+                        backfill=False,
+                    )
+                    await self.queue.put(Task(priority=Priority.MEDIUM, content=update_task))
+                    self.log.info(
+                        "DeepScan: Scheduled IncrementalScanCommentsTask for pid={} in tid={}.",
+                        post.pid,
+                        post.tid,
+                    )
+
+                posts_to_update.append(post)
+
+        if posts_to_update:
+            post_models = [Post.from_dto(p) for p in posts_to_update]
+            await self.datastore.save_items(post_models, upsert=True)
+
+        return updates_found
+
+    async def _process_attached_comments(self, post: PostDTO) -> int:
+        """处理回复附带的楼中楼。
+
+        对回复的楼中楼进行去重处理，保存新楼中楼到数据库。
+
+        Args:
+            post: 包含楼中楼数据的回复对象
+
+        Returns:
+            新保存的楼中楼数量
+        """
+        new_comment_ids = await self.datastore.filter_new_ids("comment", [c.cid for c in post.comments])
+
+        if not new_comment_ids:
+            self.log.debug("DeepScan: No new comments for post pid={}.", post.pid)
+            return 0
+
+        self.log.debug("DeepScan: Post pid={}: Found {} new comments.", post.pid, len(new_comment_ids))
+        new_comments = [c for c in post.comments if c.cid in new_comment_ids]
+
+        await self.ensure_users(new_comments)
+
+        new_comment_models = [Comment.from_dto(c) for c in new_comments]
+        await self.datastore.save_items(new_comment_models)
+
+        for comment in new_comments:
+            await self.datastore.push_to_id_queue("comment", comment.cid)
+            await self.datastore.push_object_event("comment", comment)
+
+        return len(new_comments)
+
+
 class Worker:
     """工作器类，负责处理任务队列中的任务。
 
@@ -952,6 +1199,7 @@ class Worker:
             IncrementalScanCommentsTask: IncrementalScanCommentsTaskHandler(
                 worker_id, container, self.datastore, queue
             ),
+            DeepScanTask: DeepScanTaskHandler(worker_id, container, self.datastore, queue),
         }
 
     @classmethod
