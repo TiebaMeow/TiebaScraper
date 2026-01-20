@@ -208,16 +208,22 @@ class ThreadsTaskHandler(TaskHandler):
         priority = Priority.BACKFILL if backfill else Priority.MEDIUM
 
         for thread in new_threads:
+            if not backfill:
+                await self.datastore.push_to_id_queue("thread", thread.tid)
+                await self.datastore.push_object_event("thread", thread)
+                self.log.debug("Pushed new thread tid={} to ID queue or object stream.", thread.tid)
+
+            if thread.reply_num == 0:
+                t_model = Thread.from_dto(thread)
+                await self.datastore.save_items([t_model], upsert=True)
+                self.log.debug("Thread tid={} has no replies, saved metadata only.", thread.tid)
+                continue
+
             lock_key = f"tieba:scrapper:lock:tid:{thread.tid}"
             if not await self.try_acquire_lock(lock_key):
                 continue
 
             try:
-                if not backfill:
-                    await self.datastore.push_to_id_queue("thread", thread.tid)
-                    await self.datastore.push_object_event("thread", thread)
-                    self.log.debug("Pushed new thread tid={} to ID queue or object stream.", thread.tid)
-
                 new_task_content = FullScanPostsTask(
                     tid=thread.tid,
                     backfill=backfill,
@@ -226,7 +232,6 @@ class ThreadsTaskHandler(TaskHandler):
                 await self.queue.put(Task(priority=priority, content=new_task_content))
                 self.log.info("[{}吧] Scheduled FullScanPostsTask for new tid={}", thread.fname, thread.tid)
             except Exception as e:
-                # 如果任务生成失败，释放锁以避免锁泄漏
                 await self.release_lock(lock_key)
                 self.log.exception("Failed to schedule FullScanPostsTask for tid={}: {}", thread.tid, e)
 
