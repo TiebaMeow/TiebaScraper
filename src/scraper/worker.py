@@ -25,7 +25,6 @@ from tiebameow.client.tieba_client import UnretriableApiError
 from tiebameow.models.orm import Comment, Post, Thread, User
 from tiebameow.utils.logger import logger
 
-from ..core import Container, DataStore
 from .tasks import (
     DeepScanTask,
     FullScanCommentsTask,
@@ -43,6 +42,7 @@ if TYPE_CHECKING:
 
     from tiebameow.models.dto import CommentDTO, CommentsDTO, PostDTO, PostsDTO, ThreadDTO, ThreadsDTO
 
+    from ..core import Container, DataStore
     from .queue import UniquePriorityQueue
 
 
@@ -1218,7 +1218,6 @@ class Worker:
         handlers: 任务类型到处理器的映射字典。
     """
 
-    _datastore: ClassVar[DataStore | None] = None
     _memory_locks: ClassVar[dict[str, float]] = {}
     _memory_lock_guard: ClassVar[asyncio.Lock | None] = None
 
@@ -1236,13 +1235,25 @@ class Worker:
             cls._memory_lock_guard = asyncio.Lock()
         return cls._memory_lock_guard
 
-    def __init__(self, worker_id: int, queue: UniquePriorityQueue, container: Container):
+    def __init__(
+        self,
+        worker_id: int,
+        queue: UniquePriorityQueue,
+        container: Container,
+        datastore: DataStore,
+    ):
+        """初始化 Worker。
+
+        Args:
+            worker_id: Worker 的唯一标识 ID。
+            queue: 任务优先队列。
+            container: 依赖注入容器。
+            datastore: 数据存储层实例。
+        """
         self.worker_id = worker_id
         self.queue = queue
         self.container = container
-        if Worker._datastore is None:
-            Worker._datastore = DataStore(container)
-        self.datastore = Worker._datastore
+        self.datastore = datastore
         self.log = logger.bind(worker_id=worker_id)
 
         # 初始化任务处理器
@@ -1256,16 +1267,6 @@ class Worker:
             ),
             DeepScanTask: DeepScanTaskHandler(worker_id, container, self.datastore, queue),
         }
-
-    @classmethod
-    async def close_datastore(cls) -> None:
-        """关闭共享 DataStore（用于应用退出时优雅清理）。"""
-        if cls._datastore is not None:
-            try:
-                await cls._datastore.close()
-            except Exception:
-                pass
-            cls._datastore = None
 
     async def run(self):
         """工作器主循环，持续从队列中获取并处理任务。

@@ -14,7 +14,7 @@ from typing import Literal
 
 from tiebameow.utils.logger import init_logger, logger
 
-from src.core import initialize_application
+from src.core import DataStore, initialize_application
 from src.scraper import Scheduler, Worker
 
 init_logger(
@@ -162,13 +162,14 @@ async def main(mode: Literal["periodic", "backfill", "hybrid"] = "periodic"):
     container, task_queue = await initialize_application(mode=mode)
 
     tasks: list[asyncio.Task] = []
-    scheduler = None
+    datastore: DataStore | None = None
     try:
         logger.info("Starting application in {} mode.", mode)
 
+        datastore = DataStore(container)
         scheduler = Scheduler(queue=task_queue, container=container)
         worker_count = 3 if mode == "periodic" else 5
-        workers = [Worker(i, task_queue, container) for i in range(worker_count)]
+        workers = [Worker(i, task_queue, container, datastore) for i in range(worker_count)]
 
         if mode == "periodic":
             await _run_periodic_mode(scheduler, workers, task_queue)
@@ -200,10 +201,11 @@ async def main(mode: Literal["periodic", "backfill", "hybrid"] = "periodic"):
 
         logger.info("Shutting down application...")
 
-        try:
-            await Worker.close_datastore()
-        except Exception:
-            pass
+        if datastore is not None:
+            try:
+                await datastore.close()
+            except Exception:
+                pass
 
         await container.teardown()
 
