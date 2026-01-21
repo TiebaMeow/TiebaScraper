@@ -18,7 +18,6 @@ from __future__ import annotations
 import asyncio
 import time
 from abc import ABC, abstractmethod
-from asyncio import PriorityQueue
 from typing import TYPE_CHECKING, ClassVar
 
 from aiotieba.enums import PostSortType
@@ -44,6 +43,8 @@ if TYPE_CHECKING:
 
     from tiebameow.models.dto import CommentDTO, CommentsDTO, PostDTO, PostsDTO, ThreadDTO, ThreadsDTO
 
+    from .queue import UniquePriorityQueue
+
 
 class TaskHandler(ABC):
     """任务处理器抽象基类。
@@ -56,7 +57,7 @@ class TaskHandler(ABC):
         log: 日志记录器。
     """
 
-    def __init__(self, worker_id: int, container: Container, datastore: DataStore, queue: PriorityQueue):
+    def __init__(self, worker_id: int, container: Container, datastore: DataStore, queue: UniquePriorityQueue):
         self.worker_id = worker_id
         self.container = container
         self.datastore = datastore
@@ -1235,7 +1236,7 @@ class Worker:
             cls._memory_lock_guard = asyncio.Lock()
         return cls._memory_lock_guard
 
-    def __init__(self, worker_id: int, queue: PriorityQueue, container: Container):
+    def __init__(self, worker_id: int, queue: UniquePriorityQueue, container: Container):
         self.worker_id = worker_id
         self.queue = queue
         self.container = container

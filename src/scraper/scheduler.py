@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 import asyncio
-from asyncio import PriorityQueue
 from typing import TYPE_CHECKING, Literal
 
 from tiebameow.utils.logger import logger
@@ -23,6 +22,7 @@ if TYPE_CHECKING:
     from tiebameow.models.orm import Forum
 
     from ..core import Container
+    from .queue import UniquePriorityQueue
 
 
 class Scheduler:
@@ -37,10 +37,21 @@ class Scheduler:
         log: 日志记录器。
     """
 
-    def __init__(self, queue: PriorityQueue, container: Container):
+    def __init__(self, queue: UniquePriorityQueue, container: Container):
         self.queue = queue
         self.container = container
         self.log = logger.bind(name="Scheduler")
+        self._stop_event = asyncio.Event()
+
+    def stop(self):
+        """请求调度器停止生成新任务。"""
+        self._stop_event.set()
+        self.log.info("Scheduler stop requested.")
+
+    @property
+    def is_stopped(self) -> bool:
+        """检查调度器是否已停止。"""
+        return self._stop_event.is_set()
 
     async def run(self, mode: Literal["periodic", "backfill"] = "periodic"):
         """根据不同模式生成任务并放入队列。
@@ -110,15 +121,22 @@ class Scheduler:
         await asyncio.gather(*tasks_to_schedule)
 
     async def _run_loop(self, forums_getter: Callable[[], list[Forum]], interval: int, task_name: str):
-        """通用调度循环"""
+        """通用调度循环。
+
+        支持优雅停止：当 stop() 被调用后，循环会在当前迭代完成后退出。
+        """
         good_every = self.container.config.good_page_every_ticks
         tick = 0
-        while True:
+        while not self._stop_event.is_set():
             forums = forums_getter()
             if not forums:
                 if task_name == "Default":
                     logger.debug("[{}] No forums to scan. Sleeping.", task_name)
-                await asyncio.sleep(interval)
+                try:
+                    await asyncio.wait_for(self._stop_event.wait(), timeout=interval)
+                    break
+                except TimeoutError:
+                    pass
                 continue
 
             logger.debug(
@@ -134,8 +152,15 @@ class Scheduler:
                 logger.debug("[{}] Extra GOOD-section scheduling.", task_name)
                 await self._schedule_homepage_scans(forums, is_good=True)
 
-            await asyncio.sleep(interval)
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=interval)
+                break
+            except TimeoutError:
+                pass
+
             tick += 1
+
+        logger.info("[{}] Scheduler loop stopped.", task_name)
 
     async def _run_backfill(self):
         """历史回溯调度任务生成器。"""
