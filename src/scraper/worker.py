@@ -616,7 +616,9 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
         if old_posts_had_updates:
             found_new_content = True
 
-        await self._process_attached_comments(posts)
+        attached_new_comments = await self._process_attached_comments(posts)
+        if attached_new_comments > 0:
+            found_new_content = True
 
         if any(p.create_time < stored_last_time for p in posts_page.objs):
             return False, found_new_content
@@ -719,14 +721,19 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
 
         return bool(posts_to_update)
 
-    async def _process_attached_comments(self, posts: list[PostDTO]):
+    async def _process_attached_comments(self, posts: list[PostDTO]) -> int:
         """处理回复附带的楼中楼。
 
         对每个回复的楼中楼进行去重处理，保存新楼中楼到数据库。
 
         Args:
             posts: 包含回复数据的Posts对象。
+
+        Returns:
+            int: 发现的新楼中楼数量
         """
+        total_new_comments = 0
+
         for post in posts:
             new_comment_ids = await self.datastore.filter_new_ids("comment", [c.cid for c in post.comments])
 
@@ -741,6 +748,10 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
 
             new_comment_models = [Comment.from_dto(c) for c in new_comments]
             await self.datastore.save_items(new_comment_models)
+
+            total_new_comments += len(new_comments)
+
+        return total_new_comments
 
 
 class FullScanCommentsTaskHandler(TaskHandler):
