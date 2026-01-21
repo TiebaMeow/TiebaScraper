@@ -64,28 +64,38 @@ class TaskHandler(ABC):
         self.batch_size = 100
         self.log = logger.bind(name=f"Worker-{worker_id}")
 
-    async def try_acquire_lock(self, key: str, ttl: int = 1800) -> bool:
-        """尝试获取锁。优先使用Redis，降级使用内存锁。"""
+    async def try_acquire_lock(self, key: str, ttl: int = 300) -> bool:
+        """尝试获取锁。优先使用Redis，降级使用内存锁。
+
+        Args:
+            key: 锁的唯一标识键。
+            ttl: 锁的过期时间（秒），默认300秒。
+
+        Returns:
+            bool: 是否成功获取锁。
+        """
         if self.container.redis_client:
             return await self.container.redis_client.set(key, "1", ex=ttl, nx=True)
         else:
-            now = time.time()
-            expired = [k for k, t in Worker._memory_locks.items() if now > t]
-            for k in expired:
-                Worker._memory_locks.pop(k, None)
+            async with Worker._get_memory_lock_guard():
+                now = time.time()
+                expired = [k for k, t in Worker._memory_locks.items() if now > t]
+                for k in expired:
+                    Worker._memory_locks.pop(k, None)
 
-            if key in Worker._memory_locks:
-                return False
+                if key in Worker._memory_locks:
+                    return False
 
-            Worker._memory_locks[key] = now + ttl
-            return True
+                Worker._memory_locks[key] = now + ttl
+                return True
 
     async def release_lock(self, key: str):
-        """释放锁。"""
+        """释放锁（幂等操作）。"""
         if self.container.redis_client:
             await self.container.redis_client.delete(key)
         else:
-            Worker._memory_locks.pop(key, None)
+            async with Worker._get_memory_lock_guard():
+                Worker._memory_locks.pop(key, None)
 
     async def ensure_users(self, items: Sequence[ThreadDTO | PostDTO | CommentDTO]):
         """确保用户信息已保存到数据库。
@@ -232,8 +242,9 @@ class ThreadsTaskHandler(TaskHandler):
                 await self.queue.put(Task(priority=priority, content=new_task_content))
                 self.log.info("[{}吧] Scheduled FullScanPostsTask for new tid={}", thread.fname, thread.tid)
             except Exception as e:
-                await self.release_lock(lock_key)
                 self.log.exception("Failed to schedule FullScanPostsTask for tid={}: {}", thread.tid, e)
+            finally:
+                await self.release_lock(lock_key)
 
     async def _process_old_threads(self, threads_data: ThreadsDTO, old_tids: set[int], backfill: bool):
         """处理已存在的主题贴，检查是否有更新。
@@ -317,6 +328,12 @@ class FullScanPostsTaskHandler(TaskHandler):
         pn = 1
         backfill = task_content.backfill
 
+        lock_key = f"tieba:scrapper:lock:tid:{tid}"
+
+        if not await self.try_acquire_lock(lock_key):
+            self.log.debug("Could not acquire lock for tid={}. Another task may be processing it. Skipping.", tid)
+            return
+
         processed_num = 0
 
         try:
@@ -367,7 +384,7 @@ class FullScanPostsTaskHandler(TaskHandler):
         except Exception as e:
             self.log.exception("Failed to process ScanThreadTask for tid={}: {}", tid, e)
         finally:
-            await self.release_lock(f"tieba:scrapper:lock:tid:{tid}")
+            await self.release_lock(lock_key)
 
     async def _process_posts_on_page(self, tid: int, posts_page: PostsDTO, backfill: bool):
         """处理单个页面上的所有回复。
@@ -431,6 +448,12 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
         rn = task_content.rn
         backfill = task_content.backfill
 
+        lock_key = f"tieba:scrapper:lock:tid:{tid}"
+
+        if not await self.try_acquire_lock(lock_key):
+            self.log.debug("Could not acquire lock for tid={}. Another task may be processing it. Skipping.", tid)
+            return
+
         try:
             latest_page = await self.container.tb_client.get_posts_dto(  # type: ignore
                 tid,
@@ -484,7 +507,7 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
         except Exception as e:
             self.log.exception("Failed to process IncrementalScanPostsTask for tid={}: {}", tid, e)
         finally:
-            await self.release_lock(f"tieba:scrapper:lock:tid:{tid}")
+            await self.release_lock(lock_key)
 
     async def _scan_thread_pages(
         self,
@@ -1196,6 +1219,21 @@ class Worker:
 
     _datastore: ClassVar[DataStore | None] = None
     _memory_locks: ClassVar[dict[str, float]] = {}
+    _memory_lock_guard: ClassVar[asyncio.Lock | None] = None
+
+    @classmethod
+    def _get_memory_lock_guard(cls) -> asyncio.Lock:
+        """获取内存锁的保护锁（惰性初始化）。
+
+        使用 asyncio.Lock 保护 _memory_locks 字典的并发访问，
+        防止多个协程同时修改导致的竞态条件。
+
+        Returns:
+            asyncio.Lock: 用于保护 _memory_locks 的异步锁。
+        """
+        if cls._memory_lock_guard is None:
+            cls._memory_lock_guard = asyncio.Lock()
+        return cls._memory_lock_guard
 
     def __init__(self, worker_id: int, queue: PriorityQueue, container: Container):
         self.worker_id = worker_id
