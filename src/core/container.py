@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 import redis.asyncio as redis
 from aiolimiter import AsyncLimiter
+from aiotieba.config import ProxyConfig as AiotiebaProxyConfig
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from tiebameow.client import Client
@@ -75,7 +76,15 @@ class Container:
             self.limiter = AsyncLimiter(1, time_period=1 / self.config.rps_limit)
             self.semaphore = Semaphore(self.config.concurrency_limit)
             logger.info("AioLimiter initialized with a rate of {} RPS.", self.config.rps_limit)
+
+            proxy_url = self.config.proxy_url
+            proxy_config: AiotiebaProxyConfig | bool = False
+            if proxy_url:
+                proxy_config = AiotiebaProxyConfig(url=proxy_url)
+                logger.info("Proxy enabled: {}", proxy_url.split("@")[-1])  # 隐藏密码部分
+
             self.tb_client = await Client(
+                proxy=proxy_config,
                 limiter=self.limiter,
                 semaphore=self.semaphore,
                 cooldown_429=self.config.cooldown_seconds_429,

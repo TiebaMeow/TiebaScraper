@@ -9,7 +9,7 @@
 import tomllib
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse, urlunparse
 
 from pydantic import (
     BaseModel,
@@ -123,6 +123,33 @@ class ConsumerConfig(BaseModel):
     retry_backoff_ms: int = Field(200, gt=0)
 
 
+class ProxyConfig(BaseModel):
+    """代理配置模型
+
+    支持 HTTP/HTTPS/SOCKS4/SOCKS5 代理。
+    """
+
+    enabled: bool = False
+    url: str = ""
+    username: str = ""
+    password: str = ""
+
+    @property
+    def proxy_url(self) -> str | None:
+        """生成完整的代理 URL（包含认证信息）"""
+        if not self.enabled or not self.url:
+            return None
+
+        if self.username and self.password:
+            parsed = urlparse(self.url)
+            netloc = f"{quote_plus(self.username)}:{quote_plus(self.password)}@{parsed.hostname}"
+            if parsed.port:
+                netloc += f":{parsed.port}"
+            return urlunparse((parsed.scheme, netloc, parsed.path, "", "", ""))
+
+        return self.url
+
+
 class PydanticConfig(BaseSettings):
     """Pydantic总配置模型"""
 
@@ -151,6 +178,7 @@ class PydanticConfig(BaseSettings):
     consumer: ConsumerConfig = Field(
         default_factory=lambda: ConsumerConfig(max_len=10000, timeout_ms=2000, max_retries=5, retry_backoff_ms=200)
     )
+    proxy: ProxyConfig = Field(default_factory=ProxyConfig)
 
     @classmethod
     def settings_customise_sources(
@@ -377,3 +405,13 @@ class Config:
     def consumer_config(self) -> ConsumerConfig:
         """获取内容推送配置对象。"""
         return self.pydantic_config.consumer
+
+    @property
+    def proxy_enabled(self) -> bool:
+        """获取是否启用代理。"""
+        return self.pydantic_config.proxy.enabled
+
+    @property
+    def proxy_url(self) -> str | None:
+        """获取完整的代理 URL。"""
+        return self.pydantic_config.proxy.proxy_url

@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.13.2",
+    "aiohttp-socks>=0.11.0",
     "aiolimiter>=1.2.1",
     "aiotieba[speedup]>=4.6.1",
     "asyncpg>=0.31.0",
@@ -15,7 +16,7 @@ dependencies = [
     "redis[hiredis]>=7.1.0",
     "sqlalchemy[asyncio]>=2.0.45",
     "tenacity>=9.1.2",
-    "tiebameow[orm]>=0.2.8,<0.3.0",
+    "tiebameow[orm]>=0.3.0,<0.4.0",
     "tzdata>=2025.3",
 ]
 

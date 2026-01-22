@@ -63,6 +63,22 @@ concurrency = 4
 # 遇 HTTP 429 后的全局冷却时间（秒）
 cooldown_seconds_429 = 5.0
 
+# 代理配置
+[proxy]
+# 是否启用代理
+enabled = false
+# 代理服务器 URL，支持以下格式：
+# - socks5://host:port  (SOCKS5 代理)
+# - socks5h://host:port (SOCKS5 代理，远程 DNS 解析)
+# - socks4://host:port  (SOCKS4 代理)
+# - http://host:port    (HTTP 代理)
+# - https://host:port   (HTTPS 代理)
+url = ""
+# 代理认证用户名（可留空）
+username = ""
+# 代理认证密码（可留空）
+password = ""
+
 # 缓存配置
 [cache]
 # 缓存后端，可选"memory"或"redis"
