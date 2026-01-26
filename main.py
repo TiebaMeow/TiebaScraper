@@ -41,7 +41,7 @@ async def _run_periodic_mode(scheduler: Scheduler, workers: list[Worker], task_q
     tasks.extend(asyncio.create_task(w.run(), name=f"worker-{i}") for i, w in enumerate(workers))
 
     try:
-        await asyncio.gather(*tasks)
+        await asyncio.shield(asyncio.gather(*tasks))
     except asyncio.CancelledError:
         logger.info("Received shutdown signal. Starting graceful shutdown...")
 
@@ -101,7 +101,7 @@ async def _run_hybrid_mode(scheduler: Scheduler, workers: list[Worker], task_que
     tasks.extend(asyncio.create_task(w.run(), name=f"worker-{i}") for i, w in enumerate(workers))
 
     try:
-        await asyncio.gather(*tasks)
+        await asyncio.shield(asyncio.gather(*tasks))
     except asyncio.CancelledError:
         logger.info("Received shutdown signal in hybrid mode. Starting graceful shutdown...")
 
