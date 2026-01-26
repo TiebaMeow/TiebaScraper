@@ -45,6 +45,22 @@ def _drain_queue(queue: UniquePriorityQueue) -> list[Task]:
     return items
 
 
+def create_mock_container(tb_client=None, redis_client=None, config=None):
+    return cast(
+        "Any",
+        SimpleNamespace(
+            tb_client=tb_client,
+            redis_client=redis_client,
+            config=config,
+            tb_clients=None,
+            threads_limiter=AsyncMock(),
+            posts_limiter=AsyncMock(),
+            comments_limiter=AsyncMock(),
+            limiter=AsyncMock(),
+        ),
+    )
+
+
 # ==================== ThreadsTaskHandler 测试 ====================
 
 
@@ -67,7 +83,7 @@ async def test_threads_handler_new_threads_schedule_and_push():
     queue = UniquePriorityQueue()
     handler = ThreadsTaskHandler(
         worker_id=0,
-        container=cast("Any", SimpleNamespace(tb_client=tb_client, redis_client=None)),
+        container=create_mock_container(tb_client=tb_client),
         datastore=cast("Any", datastore),
         queue=queue,
     )
@@ -102,7 +118,7 @@ async def test_threads_handler_new_thread_zero_replies():
     queue = UniquePriorityQueue()
     handler = ThreadsTaskHandler(
         worker_id=0,
-        container=cast("Any", SimpleNamespace(tb_client=tb_client, redis_client=None)),
+        container=create_mock_container(tb_client=tb_client),
         datastore=cast("Any", datastore),
         queue=queue,
     )
@@ -148,7 +164,7 @@ async def test_threads_handler_old_thread_with_updates():
     queue = UniquePriorityQueue()
     handler = ThreadsTaskHandler(
         worker_id=0,
-        container=cast("Any", SimpleNamespace(tb_client=tb_client, redis_client=None)),
+        container=create_mock_container(tb_client=tb_client),
         datastore=cast("Any", datastore),
         queue=queue,
     )
@@ -182,7 +198,7 @@ async def test_threads_handler_backfill_enqueues_next_page():
     queue = UniquePriorityQueue()
     handler = ThreadsTaskHandler(
         worker_id=0,
-        container=cast("Any", SimpleNamespace(tb_client=tb_client, redis_client=None)),
+        container=create_mock_container(tb_client=tb_client),
         datastore=cast("Any", datastore),
         queue=queue,
     )
@@ -221,7 +237,7 @@ async def test_threads_handler_filters_livepost():
     queue = UniquePriorityQueue()
     handler = ThreadsTaskHandler(
         worker_id=0,
-        container=cast("Any", SimpleNamespace(tb_client=tb_client, redis_client=None)),
+        container=create_mock_container(tb_client=tb_client),
         datastore=cast("Any", datastore),
         queue=queue,
     )
@@ -254,7 +270,7 @@ async def test_full_scan_posts_handler_process_page():
     queue = UniquePriorityQueue()
     handler = FullScanPostsTaskHandler(
         worker_id=0,
-        container=cast("Any", SimpleNamespace(tb_client=tb_client, redis_client=None)),
+        container=create_mock_container(tb_client=tb_client),
         datastore=cast("Any", datastore),
         queue=queue,
     )
@@ -294,7 +310,7 @@ async def test_full_scan_posts_handler_generates_comment_task():
     queue = UniquePriorityQueue()
     handler = FullScanPostsTaskHandler(
         worker_id=0,
-        container=cast("Any", SimpleNamespace(tb_client=tb_client, redis_client=None)),
+        container=create_mock_container(tb_client=tb_client),
         datastore=cast("Any", datastore),
         queue=queue,
     )
@@ -328,7 +344,7 @@ async def test_full_scan_posts_handler_updates_thread_metadata():
     queue = UniquePriorityQueue()
     handler = FullScanPostsTaskHandler(
         worker_id=0,
-        container=cast("Any", SimpleNamespace(tb_client=tb_client, redis_client=None)),
+        container=create_mock_container(tb_client=tb_client),
         datastore=cast("Any", datastore),
         queue=queue,
     )
@@ -379,7 +395,7 @@ async def test_incremental_scan_posts_handler():
     queue = UniquePriorityQueue()
     handler = IncrementalScanPostsTaskHandler(
         worker_id=0,
-        container=cast("Any", SimpleNamespace(tb_client=tb_client, redis_client=None, config=MockConfig())),
+        container=create_mock_container(tb_client=tb_client, config=MockConfig()),
         datastore=cast("Any", datastore),
         queue=queue,
     )
@@ -418,7 +434,7 @@ async def test_full_scan_comments_handler():
     queue = UniquePriorityQueue()
     handler = FullScanCommentsTaskHandler(
         worker_id=0,
-        container=cast("Any", SimpleNamespace(tb_client=tb_client, redis_client=None)),
+        container=create_mock_container(tb_client=tb_client),
         datastore=cast("Any", datastore),
         queue=queue,
     )
@@ -446,7 +462,7 @@ async def test_full_scan_comments_handler_backfill_no_push():
     queue = UniquePriorityQueue()
     handler = FullScanCommentsTaskHandler(
         worker_id=0,
-        container=cast("Any", SimpleNamespace(tb_client=tb_client, redis_client=None)),
+        container=create_mock_container(tb_client=tb_client),
         datastore=cast("Any", datastore),
         queue=queue,
     )
@@ -478,7 +494,7 @@ async def test_incremental_scan_comments_handler():
     queue = UniquePriorityQueue()
     handler = IncrementalScanCommentsTaskHandler(
         worker_id=0,
-        container=cast("Any", SimpleNamespace(tb_client=tb_client, redis_client=None)),
+        container=create_mock_container(tb_client=tb_client),
         datastore=cast("Any", datastore),
         queue=queue,
     )
@@ -513,7 +529,7 @@ async def test_worker_processes_task():
     worker = Worker(
         worker_id=0,
         queue=queue,
-        container=cast("Any", SimpleNamespace(tb_client=tb_client, redis_client=None)),
+        container=create_mock_container(tb_client=tb_client),
         datastore=cast("Any", datastore),
     )
 
@@ -553,7 +569,7 @@ async def test_worker_memory_lock():
     # 创建一个 handler 来测试锁
     handler = ThreadsTaskHandler(
         worker_id=0,
-        container=cast("Any", SimpleNamespace(tb_client=tb_client, redis_client=None)),
+        container=create_mock_container(tb_client=tb_client),
         datastore=cast("Any", datastore),
         queue=queue,
     )

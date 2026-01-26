@@ -21,17 +21,21 @@ if TYPE_CHECKING:
 class Priority(IntEnum):
     """任务优先级，数值越小，优先级越高。
 
-    定义了四种优先级：
-    - HIGH: 首页实时扫描和回复增量扫描任务
+    定义了六种优先级，细化控制实时性与吞吐量的平衡：
+    - REALTIME: 首页实时扫描任务（最高优先级）
+    - HIGH: 回复增量扫描任务
     - MEDIUM: 回复全量扫描和楼中楼增量扫描任务
-    - LOW: 楼中楼全量扫描和分区维护任务
-    - BACKFILL: 历史数据回溯任务
+    - LOW: 楼中楼全量扫描任务
+    - BACKGROUND: DeepScan 深度扫描任务
+    - BACKFILL: 历史数据回溯任务（最低优先级）
     """
 
-    HIGH = 1  # ScanThreads, IncrementalScanPosts
+    REALTIME = 0  # ScanThreads（首页实时扫描）
+    HIGH = 1  # IncrementalScanPosts
     MEDIUM = 2  # FullScanPosts, IncrementalScanComments
     LOW = 3  # FullScanComments
-    BACKFILL = 4  # BackfillTasks
+    BACKGROUND = 4  # DeepScan
+    BACKFILL = 5  # BackfillTasks
 
 
 # 全局序列号生成器

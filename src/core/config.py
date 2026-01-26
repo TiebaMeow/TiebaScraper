@@ -73,9 +73,16 @@ class TiebaConfig(BaseModel):
 class RateLimitConfig(BaseModel):
     """请求频率限制配置模型"""
 
-    rps: int = Field(10, gt=0)
-    concurrency: int = Field(8, gt=0)
-    cooldown_seconds_429: float = Field(5.0, gt=0)
+    # 全局配置（向后兼容）
+    rps: int = Field(default=10, gt=0)
+    concurrency: int = Field(default=8, gt=0)
+    cooldown_seconds_429: float = Field(default=5.0, gt=0)
+
+    # 分接口 RPS 配置（可选，未设置则使用默认值）
+    # 基于测试结果：posts 令牌桶容量≈57, 恢复速率≈2.2/s
+    threads_rps: float = Field(default=2.0, gt=0, description="get_threads 接口的 RPS 限制")
+    posts_rps: float = Field(default=2.0, gt=0, description="get_posts 接口的 RPS 限制")
+    comments_rps: float = Field(default=5.0, gt=0, description="get_comments 接口的 RPS 限制")
 
 
 class CacheConfig(BaseModel):
@@ -89,8 +96,12 @@ class CacheConfig(BaseModel):
 class SchedulerConfig(BaseModel):
     """调度器配置模型"""
 
-    interval_seconds: int = Field(60, gt=0)
-    good_page_every_n_ticks: int = Field(10, gt=0)
+    interval_seconds: int = Field(default=60, gt=0)
+    good_page_every_n_ticks: int = Field(default=10, gt=0)
+    # 队列感知调度：队列深度超过阈值时跳过本轮调度
+    queue_depth_threshold: int = Field(default=0, ge=0, description="队列深度阈值，0 表示禁用")
+    # 跳过调度时的等待时间（秒），避免频繁检查
+    skip_wait_seconds: int = Field(default=5, gt=0, description="跳过调度后的等待时间")
 
 
 class DeepScanConfig(BaseModel):
@@ -127,12 +138,15 @@ class ProxyConfig(BaseModel):
     """代理配置模型
 
     支持 HTTP/HTTPS/SOCKS4/SOCKS5 代理。
+    支持单个代理或多代理轮换模式。
     """
 
     enabled: bool = False
     url: str = ""
     username: str = ""
     password: str = ""
+    # 多代理支持：配置多个代理 URL 以实现轮换，可线性提升吞吐量
+    urls: list[str] = []
 
     @property
     def proxy_url(self) -> str | None:
@@ -149,6 +163,26 @@ class ProxyConfig(BaseModel):
 
         return self.url
 
+    @property
+    def proxy_urls(self) -> list[str]:
+        """获取所有代理 URL 列表（用于轮换）
+
+        如果配置了 urls 列表则使用列表，否则使用单个 url。
+        """
+        if not self.enabled:
+            return []
+
+        if self.urls:
+            return self.urls
+
+        single_url = self.proxy_url
+        return [single_url] if single_url else []
+
+    @property
+    def is_multi_proxy(self) -> bool:
+        """是否配置了多代理"""
+        return self.enabled and len(self.urls) > 1
+
 
 class PydanticConfig(BaseSettings):
     """Pydantic总配置模型"""
@@ -162,9 +196,7 @@ class PydanticConfig(BaseSettings):
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     redis: RedisConfig = Field(default_factory=RedisConfig)
     tieba: TiebaConfig = Field(default_factory=lambda: TiebaConfig(max_backfill_pages=100))
-    rate_limit: RateLimitConfig = Field(
-        default_factory=lambda: RateLimitConfig(rps=10, concurrency=8, cooldown_seconds_429=5.0)
-    )
+    rate_limit: RateLimitConfig = Field(default_factory=lambda: RateLimitConfig())
     cache: CacheConfig = Field(
         default_factory=lambda: CacheConfig(backend="memory", max_size=100000, ttl_seconds=86400)
     )
@@ -342,6 +374,21 @@ class Config:
         return self.pydantic_config.rate_limit.cooldown_seconds_429
 
     @property
+    def threads_rps(self) -> float:
+        """获取 get_threads 接口的 RPS 限制。"""
+        return self.pydantic_config.rate_limit.threads_rps
+
+    @property
+    def posts_rps(self) -> float:
+        """获取 get_posts 接口的 RPS 限制。"""
+        return self.pydantic_config.rate_limit.posts_rps
+
+    @property
+    def comments_rps(self) -> float:
+        """获取 get_comments 接口的 RPS 限制。"""
+        return self.pydantic_config.rate_limit.comments_rps
+
+    @property
     def cache_backend(self) -> Literal["memory", "redis"]:
         """获取缓存后端类型。"""
         return self.pydantic_config.cache.backend
@@ -365,6 +412,16 @@ class Config:
     def good_page_every_ticks(self) -> int:
         """获取调度器调度优质页的频率。"""
         return self.pydantic_config.scheduler.good_page_every_n_ticks
+
+    @property
+    def queue_depth_threshold(self) -> int:
+        """获取队列深度阈值，超过此值时跳过调度。0 表示禁用。"""
+        return self.pydantic_config.scheduler.queue_depth_threshold
+
+    @property
+    def skip_wait_seconds(self) -> int:
+        """获取跳过调度后的等待时间（秒）。"""
+        return self.pydantic_config.scheduler.skip_wait_seconds
 
     @property
     def deep_scan_enabled(self) -> bool:
@@ -415,3 +472,13 @@ class Config:
     def proxy_url(self) -> str | None:
         """获取完整的代理 URL。"""
         return self.pydantic_config.proxy.proxy_url
+
+    @property
+    def proxy_urls(self) -> list[str]:
+        """获取所有代理 URL 列表（用于轮换）。"""
+        return self.pydantic_config.proxy.proxy_urls
+
+    @property
+    def is_multi_proxy(self) -> bool:
+        """是否配置了多代理。"""
+        return self.pydantic_config.proxy.is_multi_proxy

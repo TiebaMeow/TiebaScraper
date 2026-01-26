@@ -57,12 +57,25 @@ db = 0
 
 # 限流配置
 [rate_limit]
-# 每秒请求数限制，backfill/hybrid 模式请设置更低的值
+# 每秒请求数限制（全局）
+# 注意：此配置用于 tiebameow.Client 内部限流，实际接口限流由分接口 RPS 配置控制
 rps = 10
 # 并发数限制
-concurrency = 4
+concurrency = 10
 # 遇 HTTP 429 后的全局冷却时间（秒）
 cooldown_seconds_429 = 5.0
+
+# 分接口 RPS 配置
+# 贴吧服务端对各接口独立限流，使用令牌桶算法
+# threads/posts 接口令牌桶容量≈60, 恢复速率≈2.0/s
+# comments 接口限流较宽松
+
+# get_threads 接口 RPS 限制
+threads_rps = 2.0
+# get_posts 接口 RPS 限制
+posts_rps = 2.0
+# get_comments 接口 RPS
+comments_rps = 5.0
 
 # 代理配置
 [proxy]
@@ -79,6 +92,14 @@ url = "socks5://127.0.0.1:1080"
 username = ""
 # 代理认证密码（可留空）
 password = ""
+# 多代理轮换：配置多个代理 URL 可线性提升吞吐量
+# 由于贴吧限流是基于 IP 的，N 个代理 = N 倍吞吐量
+# 配置此项后将忽略上面的 url 配置
+# urls = [
+#     "socks5://proxy1:1080",
+#     "socks5://proxy2:1080",
+#     "socks5://proxy3:1080",
+# ]
 
 # 缓存配置
 [cache]
@@ -97,6 +118,11 @@ ttl_seconds = 86400
 interval_seconds = 60
 # 每 N 个周期投递一次精华贴首页任务
 good_page_every_n_ticks = 10
+# 队列感知调度：队列深度超过阈值时跳过本轮调度
+# 设为 0 禁用此功能
+queue_depth_threshold = 0
+# 跳过调度后的等待时间（秒）
+skip_wait_seconds = 5
 
 # DeepScan 配置
 [deep_scan]

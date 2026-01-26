@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import time
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from aiotieba.enums import PostSortType
 from tiebameow.client.tieba_client import UnretriableApiError
@@ -98,6 +98,75 @@ class TaskHandler(ABC):
             async with Worker._get_memory_lock_guard():
                 Worker._memory_locks.pop(key, None)
 
+    def _get_client_and_limiter(self, api_type: Literal["threads", "posts", "comments"]) -> tuple[Any, Any]:
+        """获取客户端和对应的限流器（支持多代理轮换）。
+
+        Args:
+            api_type: API 类型，可选 "threads", "posts", "comments"。
+
+        Returns:
+            tuple: (client, limiter)
+        """
+        # 多代理模式：轮询获取客户端和对应的限流器
+        if self.container.tb_clients:
+            idx = self.container.get_next_client_index()
+            client = self.container.tb_clients[idx]
+            limiters = self.container.get_limiters(idx)
+            limiter_map = {"threads": limiters[0], "posts": limiters[1], "comments": limiters[2]}
+            return client, limiter_map[api_type]
+
+        # 单客户端模式
+        limiter_map = {
+            "threads": self.container.threads_limiter,
+            "posts": self.container.posts_limiter,
+            "comments": self.container.comments_limiter,
+        }
+        return self.container.tb_client, limiter_map.get(api_type, self.container.limiter)
+
+    async def get_threads(self, fname: str, **kwargs: Any) -> ThreadsDTO:
+        """带限流的 get_threads_dto 调用（支持多代理轮换）。
+
+        Args:
+            fname: 贴吧名称。
+            **kwargs: 传递给 get_threads_dto 的其他参数。
+
+        Returns:
+            ThreadsDTO: 主题贴列表数据。
+        """
+        client, limiter = self._get_client_and_limiter("threads")
+        async with limiter:  # type: ignore
+            return await client.get_threads_dto(fname, **kwargs)  # type: ignore
+
+    async def get_posts(self, tid: int, pn: int, **kwargs: Any) -> PostsDTO:
+        """带限流的 get_posts_dto 调用（支持多代理轮换）。
+
+        Args:
+            tid: 主题贴 ID。
+            pn: 页码。
+            **kwargs: 传递给 get_posts_dto 的其他参数。
+
+        Returns:
+            PostsDTO: 回复列表数据。
+        """
+        client, limiter = self._get_client_and_limiter("posts")
+        async with limiter:  # type: ignore
+            return await client.get_posts_dto(tid, pn, **kwargs)  # type: ignore
+
+    async def get_comments(self, tid: int, pid: int, pn: int = 1) -> CommentsDTO:
+        """带限流的 get_comments_dto 调用（支持多代理轮换）。
+
+        Args:
+            tid: 主题贴 ID。
+            pid: 回复 ID。
+            pn: 页码，默认为 1。
+
+        Returns:
+            CommentsDTO: 楼中楼列表数据。
+        """
+        client, limiter = self._get_client_and_limiter("comments")
+        async with limiter:  # type: ignore
+            return await client.get_comments_dto(tid, pid, pn)  # type: ignore
+
     async def ensure_users(self, items: Sequence[ThreadDTO | PostDTO | CommentDTO]):
         """确保用户信息已保存到数据库。
 
@@ -156,7 +225,7 @@ class ThreadsTaskHandler(TaskHandler):
         max_pages = task_content.max_pages
 
         try:
-            threads_data = await self.container.tb_client.get_threads_dto(fname, pn=pn, rn=rn, is_good=is_good)  # type: ignore
+            threads_data = await self.get_threads(fname, pn=pn, rn=rn, is_good=is_good)
 
             if not threads_data.objs:
                 self.log.debug("No threads found for {}吧, pn={}. Task finished.", fname, pn)
@@ -339,7 +408,7 @@ class FullScanPostsTaskHandler(TaskHandler):
 
         try:
             while True:
-                page = await self.container.tb_client.get_posts_dto(  # type: ignore
+                page = await self.get_posts(
                     tid,
                     pn,
                     rn=rn,
@@ -456,7 +525,7 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
             return
 
         try:
-            latest_page = await self.container.tb_client.get_posts_dto(  # type: ignore
+            latest_page = await self.get_posts(
                 tid,
                 pn=0xFFFF,
                 rn=rn,
@@ -503,7 +572,7 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
                     total_pages=start_pn,
                     expected_new_comments=expected_new,
                 )
-                await self.queue.put(Task(priority=Priority.LOW, content=deep_task))
+                await self.queue.put(Task(priority=Priority.BACKGROUND, content=deep_task))
 
         except Exception as e:
             self.log.exception("Failed to process IncrementalScanPostsTask for tid={}: {}", tid, e)
@@ -543,7 +612,7 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
             if pn == start_pn and initial_page_data:
                 posts_page = initial_page_data
             else:
-                posts_page = await self.container.tb_client.get_posts_dto(  # type: ignore
+                posts_page = await self.get_posts(
                     tid,
                     pn,
                     rn=rn,
@@ -565,7 +634,7 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
                 self.log.debug("No new posts found on tid={}, pn={}. Stopping scan.", tid, pn)
                 break
 
-        hot_page = await self.container.tb_client.get_posts_dto(  # type: ignore
+        hot_page = await self.get_posts(
             tid,
             pn=1,
             rn=rn,
@@ -799,7 +868,7 @@ class FullScanCommentsTaskHandler(TaskHandler):
         backfill = task_content.backfill
 
         try:
-            initial_page_data = await self.container.tb_client.get_comments_dto(tid, pid, pn=1)  # type: ignore
+            initial_page_data = await self.get_comments(tid, pid, pn=1)
 
             if not initial_page_data or not initial_page_data.objs:
                 self.log.debug("Post pid={} in tid={} has no comments or has been deleted. Task finished.", pid, tid)
@@ -837,7 +906,7 @@ class FullScanCommentsTaskHandler(TaskHandler):
             if pn == 1:
                 comments_page = initial_page_data
             else:
-                comments_page = await self.container.tb_client.get_comments_dto(tid, pid, pn)  # type: ignore
+                comments_page = await self.get_comments(tid, pid, pn)
 
             if not comments_page or not comments_page.objs:
                 self.log.warning("No comments found on pid={}, pn={}. Stopping scan.", pid, pn)
@@ -907,7 +976,7 @@ class IncrementalScanCommentsTaskHandler(TaskHandler):
         backfill = task_content.backfill
 
         try:
-            comments_page = await self.container.tb_client.get_comments_dto(tid, pid)  # type: ignore
+            comments_page = await self.get_comments(tid, pid)
 
             if not comments_page or not comments_page.objs:
                 self.log.debug("No comments found for pid={} in tid={}. Task finished.", pid, tid)
@@ -944,7 +1013,7 @@ class IncrementalScanCommentsTaskHandler(TaskHandler):
             if pn == 1:
                 comments_page = initial_page_data
             else:
-                comments_page = await self.container.tb_client.get_comments_dto(tid, pid, pn)  # type: ignore
+                comments_page = await self.get_comments(tid, pid, pn)
 
             if not comments_page or not comments_page.objs:
                 self.log.warning("No comments found on pid={}, pn={}. Stopping scan.", pid, pn)
@@ -1077,7 +1146,7 @@ class DeepScanTaskHandler(TaskHandler):
         for pn in pages:
             self.log.debug("DeepScan: Scanning tid={}, pn={}.", tid, pn)
 
-            posts_page = await self.container.tb_client.get_posts_dto(  # type: ignore
+            posts_page = await self.get_posts(
                 tid,
                 pn,
                 rn=30,

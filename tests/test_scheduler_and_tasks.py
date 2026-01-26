@@ -162,7 +162,7 @@ async def test_scheduler_homepage_scans():
         tasks.append(await q.get())
 
     assert all(isinstance(t.content, ScanThreadsTask) for t in tasks)
-    assert all(t.priority == Priority.HIGH for t in tasks)
+    assert all(t.priority == Priority.REALTIME for t in tasks)
     assert {t.content.fname for t in tasks} == {"bar", "baz"}
 
 

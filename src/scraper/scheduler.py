@@ -124,9 +124,13 @@ class Scheduler:
         """通用调度循环。
 
         支持优雅停止：当 stop() 被调用后，循环会在当前迭代完成后退出。
+        支持队列感知：当队列深度超过阈值时，跳过本轮调度。
         """
         good_every = self.container.config.good_page_every_ticks
+        queue_threshold = self.container.config.queue_depth_threshold
+        skip_wait = self.container.config.skip_wait_seconds
         tick = 0
+
         while not self._stop_event.is_set():
             forums = forums_getter()
             if not forums:
@@ -138,6 +142,25 @@ class Scheduler:
                 except TimeoutError:
                     pass
                 continue
+
+            # 队列感知调度：检查队列深度
+            if queue_threshold > 0:
+                current_depth = self.queue.qsize()
+                if current_depth >= queue_threshold:
+                    logger.warning(
+                        "[{}] Queue depth {} >= threshold {}. Skipping tick #{} and waiting {}s.",
+                        task_name,
+                        current_depth,
+                        queue_threshold,
+                        tick,
+                        skip_wait,
+                    )
+                    try:
+                        await asyncio.wait_for(self._stop_event.wait(), timeout=skip_wait)
+                        break
+                    except TimeoutError:
+                        pass
+                    continue
 
             logger.debug(
                 "[{}] tick #{}: Generating homepage scan tasks for {} forums.",
@@ -186,10 +209,10 @@ class Scheduler:
         """
         for forum in forums:
             task_content = ScanThreadsTask(fid=forum.fid, fname=forum.fname, pn=1, is_good=is_good)
-            task = Task(priority=Priority.HIGH, content=task_content)
+            task = Task(priority=Priority.REALTIME, content=task_content)
             await self.queue.put(task)
             section = "GOOD" if is_good else "NORMAL"
-            logger.debug("Scheduled {} homepage scan for [{}吧] with priority=HIGH", section, forum.fname)
+            logger.debug("Scheduled {} homepage scan for [{}吧] with priority=REALTIME", section, forum.fname)
 
     async def _schedule_backfill_homepage(self, forum: Forum, max_pages: int, *, is_good: bool = False):
         """为单个贴吧调度回溯任务的起点页面，由 Worker 递推后续页。

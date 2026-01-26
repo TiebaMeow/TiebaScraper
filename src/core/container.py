@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import itertools
 from asyncio import Semaphore
 from typing import TYPE_CHECKING
 
@@ -21,6 +22,8 @@ from tiebameow.utils.logger import logger
 from .ws_server import WebSocketServer
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from .config import Config
 
 
@@ -32,10 +35,14 @@ class Container:
 
     Attributes:
         config (Config): 应用程序配置对象
-        limiter (AsyncLimiter): 漏桶算法实现的异步限流器
+        limiter (AsyncLimiter): 漏桶算法实现的异步限流器（全局，向后兼容）
+        threads_limiter (AsyncLimiter): get_threads 接口专用限流器
+        posts_limiter (AsyncLimiter): get_posts 接口专用限流器
+        comments_limiter (AsyncLimiter): get_comments 接口专用限流器
         db_engine (AsyncEngine): SQLAlchemy异步数据库引擎
         redis_client (redis.Redis): Redis异步客户端
-        tb_client (Client): tiebameow异步贴吧客户端
+        tb_client (Client): tiebameow异步贴吧客户端（主客户端，向后兼容）
+        tb_clients (list[Client]): 多代理模式下的所有客户端列表
         forums (list[Forum]): 贴吧信息缓存
         async_sessionmaker: 异步数据库会话工厂
     """
@@ -50,11 +57,69 @@ class Container:
 
         self.limiter: AsyncLimiter | None = None
         self.semaphore: Semaphore | None = None
+        # 分接口限流器（多代理模式下，每个代理有独立的限流器组）
+        self.threads_limiter: AsyncLimiter | None = None
+        self.posts_limiter: AsyncLimiter | None = None
+        self.comments_limiter: AsyncLimiter | None = None
+        # 多代理支持：每个代理有独立的限流器组
+        self._threads_limiters: list[AsyncLimiter] = []
+        self._posts_limiters: list[AsyncLimiter] = []
+        self._comments_limiters: list[AsyncLimiter] = []
+        self._client_cycle: Iterator[int] | None = None
         self.db_engine: AsyncEngine | None = None
         self.redis_client: redis.Redis | None = None
         self.tb_client: Client | None = None
+        self.tb_clients: list[Client] = []
         self.forums: list[Forum] | None = None
         self.ws_server: WebSocketServer | None = None
+
+    def get_next_client_index(self) -> int:
+        """获取下一个客户端索引（轮询）。
+
+        Returns:
+            int: 下一个要使用的客户端索引。
+        """
+        if self._client_cycle is None:
+            return 0
+        return next(self._client_cycle)
+
+    def get_client(self, index: int | None = None) -> Client:
+        """获取指定索引或轮询获取的客户端。
+
+        Args:
+            index: 客户端索引，None 则轮询获取。
+
+        Returns:
+            Client: tiebameow 客户端实例。
+        """
+        if not self.tb_clients:
+            assert self.tb_client is not None
+            return self.tb_client
+
+        idx = index if index is not None else self.get_next_client_index()
+        return self.tb_clients[idx % len(self.tb_clients)]
+
+    def get_limiters(self, index: int | None = None) -> tuple[AsyncLimiter, AsyncLimiter, AsyncLimiter]:
+        """获取指定索引或轮询获取的限流器组。
+
+        Args:
+            index: 限流器组索引，None 则使用全局限流器。
+
+        Returns:
+            tuple: (threads_limiter, posts_limiter, comments_limiter)
+        """
+        if index is not None and self._threads_limiters:
+            idx = index % len(self._threads_limiters)
+            return (
+                self._threads_limiters[idx],
+                self._posts_limiters[idx],
+                self._comments_limiters[idx],
+            )
+        # 使用全局限流器
+        assert self.threads_limiter is not None
+        assert self.posts_limiter is not None
+        assert self.comments_limiter is not None
+        return (self.threads_limiter, self.posts_limiter, self.comments_limiter)
 
     async def setup(self):
         """异步初始化容器资源。
@@ -73,24 +138,69 @@ class Container:
         """
         logger.info("Initializing container resources...")
         try:
+            # 全局限流器（向后兼容，用于 tiebameow.Client 内部限流）
             self.limiter = AsyncLimiter(1, time_period=1 / self.config.rps_limit)
             self.semaphore = Semaphore(self.config.concurrency_limit)
-            logger.info("AioLimiter initialized with a rate of {} RPS.", self.config.rps_limit)
+            logger.info("Global limiter initialized with a rate of {} RPS.", self.config.rps_limit)
 
-            proxy_url = self.config.proxy_url
-            proxy_config: AiotiebaProxyConfig | bool = False
-            if proxy_url:
-                proxy_config = AiotiebaProxyConfig(url=proxy_url)
-                logger.info("Proxy enabled: {}", proxy_url.split("@")[-1])  # 隐藏密码部分
+            # 分接口限流器（用于 worker 层精细控制）
+            self.threads_limiter = AsyncLimiter(1, time_period=1 / self.config.threads_rps)
+            self.posts_limiter = AsyncLimiter(1, time_period=1 / self.config.posts_rps)
+            self.comments_limiter = AsyncLimiter(1, time_period=1 / self.config.comments_rps)
+            logger.info(
+                "Per-API limiters initialized: threads={} RPS, posts={} RPS, comments={} RPS.",
+                self.config.threads_rps,
+                self.config.posts_rps,
+                self.config.comments_rps,
+            )
 
-            self.tb_client = await Client(
-                proxy=proxy_config,
-                limiter=self.limiter,
-                semaphore=self.semaphore,
-                cooldown_429=self.config.cooldown_seconds_429,
-                retry_attempts=5,
-            ).__aenter__()
-            logger.info("Tieba Client started.")
+            # 多代理模式：创建多个客户端和限流器
+            proxy_urls = self.config.proxy_urls
+            if len(proxy_urls) > 1:
+                logger.info("Multi-proxy mode enabled with {} proxies.", len(proxy_urls))
+                for i, url in enumerate(proxy_urls):
+                    # 每个代理有独立的限流器组
+                    self._threads_limiters.append(AsyncLimiter(1, time_period=1 / self.config.threads_rps))
+                    self._posts_limiters.append(AsyncLimiter(1, time_period=1 / self.config.posts_rps))
+                    self._comments_limiters.append(AsyncLimiter(1, time_period=1 / self.config.comments_rps))
+
+                    proxy_config = AiotiebaProxyConfig(url=url)
+                    client = await Client(
+                        proxy=proxy_config,
+                        limiter=self.limiter,
+                        semaphore=self.semaphore,
+                        cooldown_429=self.config.cooldown_seconds_429,
+                        retry_attempts=5,
+                    ).__aenter__()
+                    self.tb_clients.append(client)
+                    logger.info("Tieba Client #{} started with proxy: {}", i, url.split("@")[-1])
+
+                # 设置主客户端为第一个（向后兼容）
+                self.tb_client = self.tb_clients[0]
+                # 设置轮询迭代器
+                self._client_cycle = itertools.cycle(range(len(self.tb_clients)))
+                logger.info(
+                    "Multi-proxy clients initialized. Total throughput: threads={} RPS, posts={} RPS, comments={} RPS.",
+                    self.config.threads_rps * len(self.tb_clients),
+                    self.config.posts_rps * len(self.tb_clients),
+                    self.config.comments_rps * len(self.tb_clients),
+                )
+            else:
+                # 单代理或无代理模式
+                proxy_url = self.config.proxy_url
+                proxy_config: AiotiebaProxyConfig | bool = False
+                if proxy_url:
+                    proxy_config = AiotiebaProxyConfig(url=proxy_url)
+                    logger.info("Proxy enabled: {}", proxy_url.split("@")[-1])
+
+                self.tb_client = await Client(
+                    proxy=proxy_config,
+                    limiter=self.limiter,
+                    semaphore=self.semaphore,
+                    cooldown_429=self.config.cooldown_seconds_429,
+                    retry_attempts=5,
+                ).__aenter__()
+                logger.info("Tieba Client started.")
 
             self.db_engine = create_async_engine(self.config.database_url, echo=False)
             self.async_sessionmaker = async_sessionmaker(
@@ -175,7 +285,12 @@ class Container:
             await self.db_engine.dispose()
             logger.info("PostgreSQL AsyncEngine disposed.")
 
-        if self.tb_client:
+        # 关闭所有 tieba 客户端
+        if self.tb_clients:
+            for i, client in enumerate(self.tb_clients):
+                await client.__aexit__()
+                logger.info("Tieba Client #{} closed.", i)
+        elif self.tb_client:
             await self.tb_client.__aexit__()
             logger.info("Tieba Client closed.")
         if self.ws_server:
