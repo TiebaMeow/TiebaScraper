@@ -634,21 +634,22 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
                 self.log.debug("No new posts found on tid={}, pn={}. Stopping scan.", tid, pn)
                 break
 
-        hot_page = await self.get_posts(
-            tid,
-            pn=1,
-            rn=rn,
-            sort=PostSortType.HOT,
-            with_comments=True,
-            comment_sort_by_agree=False,
-            comment_rn=10,
-        )
+        if not found_new_content:
+            hot_page = await self.get_posts(
+                tid,
+                pn=1,
+                rn=rn,
+                sort=PostSortType.HOT,
+                with_comments=True,
+                comment_sort_by_agree=False,
+                comment_rn=10,
+            )
 
-        if hot_page and hot_page.objs:
-            self.log.debug("Hot posts for tid={} found on page 1. Processing hot posts.", tid)
-            _, hot_found_new = await self._process_posts_on_page(stored_last_time, hot_page, backfill)
-            if hot_found_new:
-                found_new_content = True
+            if hot_page and hot_page.objs:
+                self.log.debug("Hot posts for tid={} found on page 1. Processing hot posts.", tid)
+                _, hot_found_new = await self._process_posts_on_page(stored_last_time, hot_page, backfill)
+                if hot_found_new:
+                    found_new_content = True
 
         return found_new_content
 
