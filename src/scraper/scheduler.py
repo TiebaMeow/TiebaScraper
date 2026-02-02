@@ -234,11 +234,11 @@ class Scheduler:
             is_good=is_good,
             force=self.container.config.backfill_force_scan,
         )
-        task = Task(priority=Priority.BACKFILL, content=task_content)
+        task = Task(priority=Priority.BACKFILL_THREADS, content=task_content)
         await self.queue.put(task)
         section = "GOOD" if is_good else "NORMAL"
         logger.debug(
-            "Scheduled BACKFILL [{}] start pn={} for [{}吧] with priority=BACKFILL (max_pages={}).",
+            "Scheduled BACKFILL [{}] start pn={} for [{}吧] with priority=BACKFILL_THREADS (max_pages={}).",
             section,
             start_pn,
             forum.fname,

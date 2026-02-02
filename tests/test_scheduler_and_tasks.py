@@ -26,10 +26,12 @@ def test_task_priority_ordering():
     t_high = Task(priority=Priority.HIGH, content=ScanThreadsTask(fid=1, fname="x", pn=1))
     t_medium = Task(priority=Priority.MEDIUM, content=FullScanPostsTask(tid=1))
     t_low = Task(priority=Priority.LOW, content=FullScanCommentsTask(tid=1, pid=1))
-    t_backfill = Task(priority=Priority.BACKFILL, content=ScanThreadsTask(fid=1, fname="x", pn=2, backfill=True))
+    t_backfill = Task(
+        priority=Priority.BACKFILL_THREADS, content=ScanThreadsTask(fid=1, fname="x", pn=2, backfill=True)
+    )
 
     tasks = sorted([t_backfill, t_low, t_medium, t_high])
-    assert [t.priority for t in tasks] == [Priority.HIGH, Priority.MEDIUM, Priority.LOW, Priority.BACKFILL]
+    assert [t.priority for t in tasks] == [Priority.HIGH, Priority.MEDIUM, Priority.LOW, Priority.BACKFILL_THREADS]
 
 
 def test_task_same_priority_fifo():
@@ -126,7 +128,7 @@ async def test_scheduler_backfill_enqueue_start_page_hybrid():
     task = await q.get()
     assert isinstance(task.content, ScanThreadsTask)
     assert task.content.pn == 2  # hybrid 模式从第 2 页开始
-    assert task.priority == Priority.BACKFILL
+    assert task.priority == Priority.BACKFILL_THREADS
 
 
 @pytest.mark.asyncio

@@ -35,7 +35,8 @@ class Priority(IntEnum):
     MEDIUM = 2  # FullScanPosts, IncrementalScanComments
     LOW = 3  # FullScanComments
     BACKGROUND = 4  # DeepScan
-    BACKFILL = 5  # BackfillTasks
+    BACKFILL_THREADS = 5  # ScanThreads (Backfill)
+    BACKFILL_POSTS = 6  # BackfillTasks (Posts/Comments)
 
 
 # 全局序列号生成器

@@ -260,7 +260,7 @@ class ThreadsTaskHandler(TaskHandler):
                     max_pages=max_pages,
                     force=task_content.force,
                 )
-                await self.queue.put(Task(priority=Priority.BACKFILL, content=next_task_content))
+                await self.queue.put(Task(priority=Priority.BACKFILL_THREADS, content=next_task_content))
                 self.log.info("[{}吧] Scheduled backfill ScanThreadsTask, pn={}", fname, pn + 1)
 
         except Exception as e:
@@ -285,7 +285,7 @@ class ThreadsTaskHandler(TaskHandler):
 
         await self.ensure_users(new_threads)
 
-        priority = Priority.BACKFILL if backfill else Priority.MEDIUM
+        priority = Priority.BACKFILL_POSTS if backfill else Priority.MEDIUM
 
         for thread in new_threads:
             if not backfill:
@@ -335,7 +335,7 @@ class ThreadsTaskHandler(TaskHandler):
         stored_threads = await self.datastore.get_threads_by_tids(old_tids)
         stored_threads_map = {t.tid: t for t in stored_threads}
 
-        priority = Priority.BACKFILL if backfill else Priority.HIGH
+        priority = Priority.BACKFILL_POSTS if backfill else Priority.HIGH
 
         for thread_data in old_threads:
             stored_thread = stored_threads_map.get(thread_data.tid)
@@ -475,7 +475,7 @@ class FullScanPostsTaskHandler(TaskHandler):
         post_models = [Post.from_dto(p) for p in posts]
         await self.datastore.save_items(post_models)
 
-        priority = Priority.BACKFILL if backfill else Priority.LOW
+        priority = Priority.BACKFILL_POSTS if backfill else Priority.LOW
 
         for post in posts:
             if not backfill:
@@ -742,7 +742,7 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
         await self.datastore.save_items(new_post_models)
         self.log.debug("Saved {} new posts to DB.", len(new_posts))
 
-        priority = Priority.BACKFILL if backfill else Priority.LOW
+        priority = Priority.BACKFILL_POSTS if backfill else Priority.LOW
 
         for post in new_posts:
             if not backfill:
@@ -784,7 +784,7 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
 
         posts_to_update = []
 
-        priority = Priority.BACKFILL if backfill else Priority.MEDIUM
+        priority = Priority.BACKFILL_POSTS if backfill else Priority.MEDIUM
 
         for post_data in old_posts:
             stored_post = stored_posts_map.get(post_data.pid)
