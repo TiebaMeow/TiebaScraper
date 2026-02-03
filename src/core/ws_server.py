@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
     from pydantic import WebsocketUrl
 
-    ForumHandler = Callable[[str], Awaitable[bool]]
+    ForumHandler = Callable[..., Awaitable[bool]]
 
 
 class WebSocketServer:
@@ -87,6 +87,7 @@ class WebSocketServer:
 
                 if mtype == "add_forum" or mtype == "remove_forum":
                     fname = str(payload.get("fname", "")).strip()
+                    group = payload.get("group")
                     if not fname:
                         await ws.send_str(json.dumps({"ok": False, "error": "fname_required"}))
                         continue
@@ -95,7 +96,7 @@ class WebSocketServer:
                             if not self._add_forum_handler:
                                 await ws.send_str(json.dumps({"ok": False, "error": "handler_not_ready"}))
                                 continue
-                            ok = await self._add_forum_handler(fname)
+                            ok = await self._add_forum_handler(fname, group)
                         else:
                             if not self._remove_forum_handler:
                                 await ws.send_str(json.dumps({"ok": False, "error": "handler_not_ready"}))

@@ -54,6 +54,12 @@ username = ""
 password = ""
 # Redis 数据库编号（一般为 0）
 db = 0
+# 指令请求 Stream 名称
+# 用于动态添加/删除监控贴吧的命令通信
+stream_request = "scraper:tieba:cmd:req"
+# 指令响应 Stream 名称
+# 用于命令响应的回传
+stream_response = "scraper:tieba:cmd:res"
 
 # 限流配置
 [rate_limit]

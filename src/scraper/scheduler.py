@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import TYPE_CHECKING, Literal
 
 from tiebameow.utils.logger import logger
@@ -66,6 +67,94 @@ class Scheduler:
         else:
             raise ValueError(f"Unknown scheduler mode: {mode}")
 
+    def _get_forums_for_group(self, group_name: str) -> list[Forum]:
+        """动态获取分组下的贴吧列表。"""
+        current_forums = self.container.forums or []
+        available_forums_map = {f.fname: f for f in current_forums}
+
+        group = next((g for g in self.container.config.groups if g.name == group_name), None)
+        if not group:
+            return []
+
+        return [available_forums_map[name] for name in group.forums if name in available_forums_map]
+
+    async def _listen_for_redis_commands(self):
+        """监听 Redis 指令 Stream。"""
+        if not self.container.redis_client:
+            return
+
+        stream_in = self.container.config.redis_stream_request
+        stream_out = self.container.config.redis_stream_response
+        group_name = "tieba_scheduler_group"
+        consumer_name = "scheduler_main"
+
+        try:
+            await self.container.redis_client.xgroup_create(stream_in, group_name, id="0", mkstream=True)
+        except Exception as e:
+            if "BUSYGROUP" not in str(e):
+                self.log.warning("Error creating stream group: {}", e)
+
+        self.log.info("[RedisListener] Listening on Stream {} (Group: {})", stream_in, group_name)
+
+        while not self._stop_event.is_set():
+            try:
+                streams = {stream_in: ">"}
+                events = await self.container.redis_client.xreadgroup(
+                    group_name,
+                    consumer_name,
+                    streams,  # type: ignore
+                    count=1,
+                    block=1000,
+                )
+
+                if not events:
+                    continue
+
+                for _stream, messages in events:
+                    for msg_id, fields in messages:
+                        try:
+                            payload_str = fields.get("payload")
+                            if not payload_str:
+                                self.log.warning("Received message without 'payload' field: {}", fields)
+                                continue
+
+                            data = json.loads(payload_str)
+                            cmd_type = data.get("type")
+                            req_id = data.get("id")
+
+                            success = False
+                            msg = "Unknown command"
+
+                            if cmd_type == "add_forum":
+                                fname = data.get("fname")
+                                group = data.get("group")
+                                if fname:
+                                    self.log.info(
+                                        "[RedisListener] Processing command: add_forum(fname={}, group={})",
+                                        fname,
+                                        group,
+                                    )
+                                    success = await self.container.add_forum(fname, group)
+                                    msg = "Added successfully" if success else "Failed to add forum"
+                                else:
+                                    msg = "fname is required"
+
+                            # 发送回执
+                            if req_id:
+                                response = {"ref_id": req_id, "ok": success, "msg": msg}
+                                await self.container.redis_client.xadd(stream_out, {"payload": json.dumps(response)})
+
+                        except Exception as e:
+                            self.log.error("Error processing message {} content: {}", msg_id, e)
+                        finally:
+                            await self.container.redis_client.xack(stream_in, group_name, msg_id)
+
+            except Exception as e:
+                self.log.error("[RedisListener] Loop error: {}", e)
+                await asyncio.sleep(1)
+
+        self.log.info("[RedisListener] Stopped.")
+
     async def _run_periodic(self):
         """
         周期性调度任务生成器。
@@ -76,43 +165,32 @@ class Scheduler:
         logger.info("Starting PERIODIC mode. Default Interval: {}s", log_interval)
 
         tasks_to_schedule = []
-        grouped_forum_names = set()
-        available_forums_map = {f.fname: f for f in (self.container.forums or [])}
 
         for group in self.container.config.groups:
-            group_forums = [available_forums_map[name] for name in group.forums if name in available_forums_map]
-            grouped_forum_names.update(group.forums)
-
             interval = group.interval_seconds or self.container.config.scheduler_interval_seconds
+            logger.info("Starting Group '{}' loop. Interval: {}s.", group.name, interval)
 
-            if group_forums:
-                logger.info(
-                    "Starting Group '{}' loop. Interval: {}s. Forums: {}",
-                    group.name,
+            tasks_to_schedule.append(
+                self._run_loop(
+                    lambda g_name=group.name: self._get_forums_for_group(g_name),
                     interval,
-                    [f.fname for f in group_forums],
+                    f"Group-{group.name}",
                 )
-                tasks_to_schedule.append(
-                    self._run_loop(
-                        lambda f=group_forums: f,
-                        interval,
-                        f"Group-{group.name}",
-                    )
-                )
-            elif group.forums:
-                logger.warning(
-                    "Group '{}' has forums configured {} but none were initialized/found.", group.name, group.forums
-                )
+            )
 
         def get_default_forums() -> list[Forum]:
             """获取未分组的默认贴吧列表。"""
             all_forums = self.container.forums or []
-            return [f for f in all_forums if f.fname not in grouped_forum_names]
+            current_grouped_names = {name for g in self.container.config.groups for name in g.forums}
+            return [f for f in all_forums if f.fname not in current_grouped_names]
 
         logger.info("Starting Default loop for non-grouped/dynamic forums.")
         tasks_to_schedule.append(
             self._run_loop(get_default_forums, self.container.config.scheduler_interval_seconds, "Default")
         )
+
+        if self.container.redis_client:
+            tasks_to_schedule.append(self._listen_for_redis_commands())
 
         if not tasks_to_schedule:
             logger.warning("No loops scheduled. check configuration.")

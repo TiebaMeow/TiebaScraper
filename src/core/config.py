@@ -45,6 +45,8 @@ class RedisConfig(BaseModel):
     username: str = ""
     password: str = ""
     db: int = 0
+    stream_request: str = "scraper:tieba:cmd:req"
+    stream_response: str = "scraper:tieba:cmd:res"
 
 
 class ForumGroup(BaseModel):
@@ -329,6 +331,16 @@ class Config:
     def redis_url(self) -> str:
         """获取Redis连接URL。"""
         return str(self.pydantic_config.redis_url)
+
+    @property
+    def redis_stream_request(self) -> str:
+        """获取 Redis 指令请求与 Stream 名称。"""
+        return self.pydantic_config.redis.stream_request
+
+    @property
+    def redis_stream_response(self) -> str:
+        """获取 Redis 指令响应 Stream 名称。"""
+        return self.pydantic_config.redis.stream_response
 
     @property
     def forums(self) -> list[str]:
