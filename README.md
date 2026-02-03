@@ -43,12 +43,12 @@ uv sync
 
 1. 复制配置文件模板
 
-    ```bash
-    # Linux / macOS
-    cp config.example.toml config.toml
-    # Windows (PowerShell)
-    Copy-Item config.example.toml config.toml
-    ```
+   ```bash
+   # Linux / macOS
+   cp config.example.toml config.toml
+   # Windows (PowerShell)
+   Copy-Item config.example.toml config.toml
+   ```
 
 2. 编辑 `config.toml` 文件，根据注释填写相应的配置项
 
@@ -56,19 +56,19 @@ uv sync
 
 4. 为 `TiebaScraper` 创建一个单独的数据库（名称可以自定义）：
 
-    ```sql
-    CREATE DATABASE tieba_data;
-    ```
+   ```sql
+   CREATE DATABASE tieba_data;
+   ```
 
 5. 推荐单独为 `TiebaScraper` 创建一个用户：
 
-    ```sql
-    CREATE USER your_username WITH PASSWORD 'your_password';
-    GRANT ALL PRIVILEGES ON DATABASE tieba_data TO your_username;
-    \c tieba_data
-    GRANT ALL PRIVILEGES ON SCHEMA public TO your_username;
-    GRANT CREATE ON SCHEMA public TO your_username;
-    ```
+   ```sql
+   CREATE USER your_username WITH PASSWORD 'your_password';
+   GRANT ALL PRIVILEGES ON DATABASE tieba_data TO your_username;
+   \c tieba_data
+   GRANT ALL PRIVILEGES ON SCHEMA public TO your_username;
+   GRANT CREATE ON SCHEMA public TO your_username;
+   ```
 
 ### 数据库分区配置（可选）
 
@@ -131,27 +131,58 @@ TiebaMeow 提供了一个基于 NoneBot2 的 QQ 机器人 [TiebaManageBot](https
 
 ### 动态添加/删除贴吧
 
-运行于实时监控模式时，`TiebaScraper` 支持动态添加或删除监控的贴吧。你可以通过 WebSocket 连接发送以下格式的消息来实现：
+运行于实时监控模式时，`TiebaScraper` 支持动态添加或删除监控的贴吧。你可以选择通过 WebSocket 连接或 Redis Stream 命令来实现。动态添加的任何贴吧配置都会被自动持久化到 `config.toml` 文件中，确保重启后依然有效。
+
+#### 通过 WebSocket
+
+发送以下 JSON 格式的消息：
 
 - 添加贴吧：
 
-    ```json
-    {
-        "type": "add_forum",
-        "fname": "贴吧名"
-    }
-    ```
+  ```json
+  {
+    "type": "add_forum",
+    "fname": "贴吧名",
+    "group": "分组名（可选）"
+  }
+  ```
 
 - 删除贴吧：
 
-    ```json
-    {
-        "type": "remove_forum",
-        "fname": "贴吧名"
-    }
-    ```
+  ```json
+  {
+    "type": "remove_forum",
+    "fname": "贴吧名"
+  }
+  ```
 
-动态添加的贴吧将会使用全局默认的调度周期运行。
+#### 通过 Redis Stream
+
+向配置的请求 Stream（默认 `scraper:tieba:cmd:req`）添加消息。
+
+- **Input**：添加消息字段 `payload`，值为 JSON 字符串。
+
+  ```bash
+  # Redis 命令行示例
+  XADD scraper:tieba:cmd:req * payload '{"id": "req_1", "type": "add_forum", "fname": "原神", "group": "game"}'
+  ```
+
+  - `id`: (可选) 请求 ID，将回传给响应。
+  - `type`: 指令类型。
+  - `fname`: 贴吧名。
+  - `group`: (可选) 分组名。
+
+- **Output**：监听响应 Stream（默认 `scraper:tieba:cmd:res`）。
+
+  ```json
+  {
+    "ref_id": "req_1",
+    "ok": true,
+    "msg": "Added successfully"
+  }
+  ```
+
+如果不指定分组，动态添加的贴吧将会使用全局默认的调度周期运行。
 
 ## Docker 部署
 
@@ -159,48 +190,48 @@ TiebaMeow 提供了一个基于 NoneBot2 的 QQ 机器人 [TiebaManageBot](https
 
 1. **准备配置文件**:
 
-    复制 Docker 环境配置文件模板：
+   复制 Docker 环境配置文件模板：
 
-    ```bash
-    # Linux / macOS
-    cp config.docker.example.toml config.toml
-    # Windows (PowerShell)
-    Copy-Item config.docker.example.toml config.toml
-    ```
+   ```bash
+   # Linux / macOS
+   cp config.docker.example.toml config.toml
+   # Windows (PowerShell)
+   Copy-Item config.docker.example.toml config.toml
+   ```
 
-    然后，根据你的需求编辑 `config.toml` 文件。**请注意**，在 Docker 环境中，应用容器需要通过服务名（`postgres` 和 `redis`）来访问数据库和 Redis，因此请确保主机名配置正确。`config.docker.example.toml` 已预设了正确的主机名。
+   然后，根据你的需求编辑 `config.toml` 文件。**请注意**，在 Docker 环境中，应用容器需要通过服务名（`postgres` 和 `redis`）来访问数据库和 Redis，因此请确保主机名配置正确。`config.docker.example.toml` 已预设了正确的主机名。
 
-    你也可以使用环境变量来传递配置参数，环境变量将会优先于配置文件生效，详情请参考 `.env.example` 中的注释。
+   你也可以使用环境变量来传递配置参数，环境变量将会优先于配置文件生效，详情请参考 `.env.example` 中的注释。
 
 2. **启动服务**:
 
-    在项目根目录下运行以下命令：
+   在项目根目录下运行以下命令：
 
-    ```bash
-    docker compose up -d
-    ```
+   ```bash
+   docker compose up -d
+   ```
 
-    该命令会从 Docker Hub 拉取 `tiebameow/tiebascraper` 和 `timescale/timescaledb:latest-pg17` 镜像，并启动应用、PostgreSQL（已预装 `TimescaleDB`）和 Redis 服务。
+   该命令会从 Docker Hub 拉取 `tiebameow/tiebascraper` 和 `timescale/timescaledb:latest-pg17` 镜像，并启动应用、PostgreSQL（已预装 `TimescaleDB`）和 Redis 服务。
 
 3. **查看日志**:
 
-    ```bash
-    docker compose logs -f app
-    ```
+   ```bash
+   docker compose logs -f app
+   ```
 
 4. **切换运行模式**:
 
-    默认情况下，应用以 `periodic`（实时监控）模式运行。如果你需要切换模式，可以运行以下命令：
+   默认情况下，应用以 `periodic`（实时监控）模式运行。如果你需要切换模式，可以运行以下命令：
 
-    ```bash
-    docker compose run --rm app --mode backfill
-    ```
+   ```bash
+   docker compose run --rm app --mode backfill
+   ```
 
 5. **停止服务**:
 
-    ```bash
-    docker compose down
-    ```
+   ```bash
+   docker compose down
+   ```
 
 ### 其他注意事项
 
