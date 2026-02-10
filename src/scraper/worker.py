@@ -632,7 +632,18 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
                     expected_new_comments=expected_new,
                 )
                 await self.queue.put(Task(priority=Priority.BACKGROUND, content=deep_task))
-
+        except UnretriableApiError as e:
+            if e.code == 4:
+                self.log.warning(
+                    "Thread tid={} may have been deleted (err_code=4). Saving thread metadata from previous crawl.", tid
+                )
+                if task_content.target_last_time and task_content.target_reply_num is not None:
+                    await self.datastore.update_thread_metadata(
+                        tid, task_content.target_last_time, task_content.target_reply_num
+                    )
+                    self.log.debug("Updated thread metadata for tid={} after deletion detected.", tid)
+            else:
+                self.log.exception("Failed to process IncrementalScanPostsTask for tid={}: {}", tid, e)
         except Exception as e:
             self.log.exception("Failed to process IncrementalScanPostsTask for tid={}: {}", tid, e)
         finally:
@@ -941,7 +952,15 @@ class FullScanCommentsTaskHandler(TaskHandler):
             await self._scan_comment_pages(tid, pid, initial_page_data, backfill)
 
             self.log.debug("Finished comment scan for pid={} in tid={}.", pid, tid)
-
+        except UnretriableApiError as e:
+            if e.code == 4:
+                self.log.warning(
+                    "Post pid={} or thread tid={} may have been deleted (err_code=4). Stopping comment scan.",
+                    pid,
+                    tid,
+                )
+            else:
+                self.log.exception("Failed to process ScanPostCommentsTask for pid={}, tid={}: {}", pid, tid, e)
         except Exception as e:
             self.log.exception("Failed to process ScanPostCommentsTask for pid={}, tid={}: {}", pid, tid, e)
 
@@ -1045,7 +1064,15 @@ class IncrementalScanCommentsTaskHandler(TaskHandler):
             total_pages = comments_page.page.total_page
 
             await self._scan_comment_pages(tid, pid, total_pages, comments_page, backfill)
-
+        except UnretriableApiError as e:
+            if e.code == 4:
+                self.log.warning(
+                    "Post pid={} or thread tid={} may have been deleted (err_code=4). Stopping comment scan.",
+                    pid,
+                    tid,
+                )
+            else:
+                self.log.exception("Failed to process IncrementalScanCommentsTask for pid={}, tid={}: {}", pid, tid, e)
         except Exception as e:
             self.log.exception("Failed to process IncrementalScanCommentsTask for pid={}, tid={}: {}", pid, tid, e)
 
@@ -1169,7 +1196,14 @@ class DeepScanTaskHandler(TaskHandler):
                 tid,
                 new_comments_found,
             )
-
+        except UnretriableApiError as e:
+            if e.code == 4:
+                self.log.warning(
+                    "Thread tid={} may have been deleted (err_code=4). Stopping DeepScan.",
+                    tid,
+                )
+            else:
+                self.log.exception("DeepScan failed for tid={}: {}", tid, e)
         except Exception as e:
             self.log.exception("DeepScan failed for tid={}: {}", tid, e)
 
