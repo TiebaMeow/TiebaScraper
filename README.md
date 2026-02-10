@@ -2,7 +2,7 @@
 
 # TiebaScraper
 
-_基于 aiotieba 的高性能百度贴吧异步爬虫工具，支持实时监控和历史数据回溯。_
+_基于 [aiotieba](https://github.com/lumina37/aiotieba) 的高性能百度贴吧异步爬虫工具，支持实时监控和历史数据回溯。_
 
 </div>
 
@@ -21,7 +21,8 @@ _基于 aiotieba 的高性能百度贴吧异步爬虫工具，支持实时监控
 - **可扩展性**：
   - 合理的表结构设计，支持高效存储与查询大量数据
   - 通过 WebSocket/Redis 支持高度可自定义的实时内容审查
-  - 实时监控模式支持通过 WebSocket 动态添加或删除监控的贴吧
+  - 实时监控模式支持动态添加或删除监控的贴吧
+  - 支持通过 Prometheus 监控爬虫相关指标
   - 与 TiebaMeow 工具集无缝集成
 
 ## 环境要求
@@ -120,14 +121,21 @@ uv run main.py --mode hybrid
 
 当程序运行在实时监控模式或混合模式时，你可以在 `config.toml` 中配置通过 WebSocket/Redis 将内容推送到审查服务进行处理。你可以在 [examples](./examples) 目录下找到消费者示例和反序列化示例。
 
-你可以选择两种消息格式：
+开启推送后，程序会推送完整序列化后的对象，你可以直接获得完整数据，并可通过 [tiebameow](https://github.com/TiebaMeow/tiebameow/blob/main/src/tiebameow/serializer/serializer.py) 提供的反序列化函数反序列化得到完整的 `tiebameow` DTO 对象，但会带来更大的消息体与更大的序列化/反序列化开销。DTO 对象的定义请参考 [tiebameow/models/dto.py](https://github.com/TiebaMeow/tiebameow/blob/main/src/tiebameow/models/dto.py)。
 
-- `id` 模式仅推送内容类型与 tid/pid，需要内容审查端通过回表查询或手动 fetch 获取完整对象，不过你可以获得更小的序列化/反序列化开销与更小的消息体。
-- `object` 模式会推送完整序列化后的对象，你可以直接获得完整数据，并可通过 [tiebameow](https://github.com/TiebaMeow/tiebameow/blob/main/src/tiebameow/serializer/serializer.py) 提供的反序列化函数反序列化得到完整的 `tiebameow` DTO 对象，但会带来更大的消息体与更大的序列化/反序列化开销。DTO 对象的定义请参考 [tiebameow/models/dto.py](https://github.com/TiebaMeow/tiebameow/blob/main/src/tiebameow/models/dto.py)。
-
-如果你希望 `TiebaScraper` -> `内容审查服务` 的消息推送足够可靠，或者说你不希望漏掉任何一条内容，推荐使用 Redis + object 模式。object 模式下的 Redis Streams 可以保证消息不丢失，并且可以通过消费者组来实现多实例水平扩展。详细原理可参考 [Redis Streams 官方文档](https://redis.io/docs/latest/develop/data-types/streams/) 或 [中文教程](https://redis.com.cn/redis-stream.html)。
+如果你希望 `TiebaScraper` -> `内容审查服务` 的消息推送足够可靠，或者说你不希望漏掉任何一条内容，推荐使用 Redis。Redis Streams 可以保证消息不丢失，并且可以通过消费者组来实现多实例水平扩展。详细原理可参考 [Redis Streams 官方文档](https://redis.io/docs/latest/develop/data-types/streams/) 或 [中文教程](https://redis.com.cn/redis-stream.html)。
 
 TiebaMeow 提供了一个基于 NoneBot2 的 QQ 机器人 [TiebaManageBot](https://github.com/TiebaMeow/TiebaManageBot)，你可以使用它提供的无缝集成来快速配置简单的内容审查服务。你也可以使用任何你喜欢的技术栈来实现审查服务，只要它能够连接到 WebSocket/Redis 并处理消息即可。
+
+### Prometheus 监控
+
+`TiebaScraper` 内置了 Prometheus 监控指标，你可以在配置文件中启用它：
+
+```toml
+[metrics]
+enabled = true
+port = 8001
+```
 
 ### 动态添加/删除贴吧
 
@@ -249,9 +257,11 @@ TiebaMeow 提供了一个基于 NoneBot2 的 QQ 机器人 [TiebaManageBot](https
 │   │   ├── container.py    # 依赖注入容器 (IoC)，管理 DB/Redis/Client 生命周期
 │   │   ├── datastore.py    # 数据持久化逻辑 (PostgreSQL/TimescaleDB)
 │   │   ├── initialize.py   # 应用初始化流程
+│   │   ├── metrics.py      # Prometheus 监控指标
 │   │   ├── publisher.py    # 消息推送 (Redis/WebSocket)
 │   │   └── ws_server.py    # WebSocket 服务端实现
 │   ├── scraper/            # 爬虫业务逻辑
+│   │   ├── queue.py        # 任务优先级队列
 │   │   ├── scheduler.py    # 任务调度器 (周期性/回溯模式)
 │   │   ├── tasks.py        # 任务定义 (Task 数据类)
 │   │   └── worker.py       # 任务执行器 (Worker)
