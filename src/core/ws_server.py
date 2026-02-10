@@ -5,7 +5,6 @@
 - 接受 JSON 命令，当前支持：
   {"type":"add_forum","fname":"吧名"}
 - 广播 API：可用于对象事件分发（由 WebSocketPublisher 复用）
-- 预留 metrics 推送接口（未来用于主动上报运行指标）
 
 设计要点：
 - 单例化服务器实例由上层持有（避免重复绑定端口）；
@@ -16,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from aiohttp import web
 from tiebameow.utils.logger import logger
@@ -178,11 +177,6 @@ class WebSocketServer:
         for ws in to_remove:
             self._conns.discard(ws)
         return delivered
-
-    # 预留：主动推送指标（未来可定时调用）
-    async def push_metrics(self, data: dict[str, Any]) -> bool:
-        payload = json.dumps({"type": "metrics", "data": data})
-        return await self.broadcast_text(payload)
 
     # 工具方法：返回可连接的 ws:// URL（适配随机端口绑定）
     def get_ws_url(self) -> str:

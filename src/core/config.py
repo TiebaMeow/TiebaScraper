@@ -49,6 +49,13 @@ class RedisConfig(BaseModel):
     stream_response: str = "scraper:tieba:cmd:res"
 
 
+class MetricsConfig(BaseModel):
+    """监控配置模型"""
+
+    enabled: bool = True
+    port: int = 8000
+
+
 class ForumGroup(BaseModel):
     """贴吧分组配置"""
 
@@ -197,6 +204,7 @@ class PydanticConfig(BaseSettings):
 
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     redis: RedisConfig = Field(default_factory=RedisConfig)
+    metrics: MetricsConfig = Field(default_factory=MetricsConfig)
     tieba: TiebaConfig = Field(default_factory=lambda: TiebaConfig(max_backfill_pages=100))
     rate_limit: RateLimitConfig = Field(default_factory=lambda: RateLimitConfig())
     cache: CacheConfig = Field(
@@ -213,6 +221,16 @@ class PydanticConfig(BaseSettings):
         default_factory=lambda: ConsumerConfig(max_len=10000, timeout_ms=2000, max_retries=5, retry_backoff_ms=200)
     )
     proxy: ProxyConfig = Field(default_factory=ProxyConfig)
+
+    @model_validator(mode="after")
+    def check_ports_conflict(self) -> "PydanticConfig":
+        if self.metrics.enabled and self.websocket.enabled:
+            if self.metrics.port == self.websocket.port:
+                raise ValueError(
+                    f"Port conflict: Metrics server and WebSocket server are both enabled on port "
+                    f"{self.metrics.port}. Please set different ports."
+                )
+        return self
 
     @classmethod
     def settings_customise_sources(
@@ -341,6 +359,16 @@ class Config:
     def redis_stream_response(self) -> str:
         """获取 Redis 指令响应 Stream 名称。"""
         return self.pydantic_config.redis.stream_response
+
+    @property
+    def metrics_enabled(self) -> bool:
+        """获取是否开启 Metrics Server。"""
+        return self.pydantic_config.metrics.enabled
+
+    @property
+    def metrics_port(self) -> int:
+        """获取 Metrics Server 监听端口。"""
+        return self.pydantic_config.metrics.port
 
     @property
     def forums(self) -> list[str]:

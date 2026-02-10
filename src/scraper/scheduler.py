@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Literal
 
 from tiebameow.utils.logger import logger
 
+from ..core.metrics import BACKFILL_FORUMS_COUNT, PERIODIC_FORUMS_COUNT
 from .tasks import Priority, ScanThreadsTask, Task
 
 if TYPE_CHECKING:
@@ -211,6 +212,7 @@ class Scheduler:
 
         while not self._stop_event.is_set():
             forums = forums_getter()
+            PERIODIC_FORUMS_COUNT.labels(group=task_name).set(len(forums))
             if not forums:
                 if task_name == "Default":
                     logger.debug("[{}] No forums to scan. Sleeping.", task_name)
@@ -272,6 +274,8 @@ class Scheduler:
         if not forums:
             logger.warning("No forums configured in tieba.forums. Scheduler will be idle.")
             return
+
+        BACKFILL_FORUMS_COUNT.set(len(forums))
 
         for forum in forums:
             await self._schedule_backfill_homepage(forum, max_pages, is_good=False)

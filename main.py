@@ -12,6 +12,7 @@ import asyncio
 import platform
 from typing import Literal
 
+from prometheus_client import start_http_server
 from tiebameow.utils.logger import init_logger, logger
 
 from src.core import DataStore, initialize_application
@@ -160,6 +161,10 @@ async def main(mode: Literal["periodic", "backfill", "hybrid"] = "periodic"):
     - hybrid: 周期调度器常驻 + 回溯调度器跑一轮 + 多 worker。
     """
     container, task_queue = await initialize_application(mode=mode)
+
+    if container.config.metrics_enabled:
+        start_http_server(container.config.metrics_port)
+        logger.info("Prometheus metrics server started on port {}", container.config.metrics_port)
 
     tasks: list[asyncio.Task] = []
     datastore: DataStore | None = None

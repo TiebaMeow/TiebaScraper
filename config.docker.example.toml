@@ -60,6 +60,13 @@ stream_request = "scraper:tieba:cmd:req"
 # 用于命令响应的回传
 stream_response = "scraper:tieba:cmd:res"
 
+# 监控配置
+[metrics]
+# 是否开启 Prometheus Metrics Server
+enabled = true
+# 监听端口
+port = 8000
+
 # 限流配置
 [rate_limit]
 # 每秒请求数限制（全局）

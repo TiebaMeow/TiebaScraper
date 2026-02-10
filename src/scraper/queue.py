@@ -8,6 +8,8 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
+from ..core.metrics import QUEUE_SIZE
+
 if TYPE_CHECKING:
     from .tasks import Task
 
@@ -52,6 +54,7 @@ class UniquePriorityQueue:
         self._unique_set.add(unique_key)
         try:
             self._q.put_nowait(item)
+            QUEUE_SIZE.labels(priority=item.priority.name).inc()
         except Exception:
             self._unique_set.discard(unique_key)
             raise
@@ -65,6 +68,7 @@ class UniquePriorityQueue:
         self._unique_set.add(unique_key)
         try:
             await self._q.put(item)
+            QUEUE_SIZE.labels(priority=item.priority.name).inc()
         except Exception:
             self._unique_set.discard(unique_key)
             raise
@@ -72,6 +76,7 @@ class UniquePriorityQueue:
     async def get(self) -> Task:
         """获取任务，并从去重集合中移除。"""
         item = await self._q.get()
+        QUEUE_SIZE.labels(priority=item.priority.name).dec()
         try:
             unique_key = self._get_unique_key(item)
             self._unique_set.discard(unique_key)
@@ -81,6 +86,7 @@ class UniquePriorityQueue:
 
     def get_nowait(self) -> Task:
         item = self._q.get_nowait()
+        QUEUE_SIZE.labels(priority=item.priority.name).dec()
         try:
             unique_key = self._get_unique_key(item)
             self._unique_set.discard(unique_key)

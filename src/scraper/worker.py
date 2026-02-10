@@ -25,6 +25,14 @@ from tiebameow.client.tieba_client import UnretriableApiError
 from tiebameow.models.orm import Comment, Post, Thread, User
 from tiebameow.utils.logger import logger
 
+from ..core.metrics import (
+    ACTIVE_WORKERS,
+    API_REQUEST_DURATION,
+    RATELIMIT_WAIT_DURATION,
+    SCRAPED_ITEMS,
+    TASK_DURATION,
+    WORKER_ERRORS,
+)
 from .tasks import (
     DeepScanTask,
     FullScanCommentsTask,
@@ -134,8 +142,25 @@ class TaskHandler(ABC):
             ThreadsDTO: 主题贴列表数据。
         """
         client, limiter = self._get_client_and_limiter("threads")
-        async with limiter:  # type: ignore
+        with RATELIMIT_WAIT_DURATION.labels(limiter_type="threads").time():
+            await limiter.acquire()
+
+        start = time.perf_counter()
+        status = "success"
+        try:
             return await client.get_threads_dto(fname, **kwargs)  # type: ignore
+        except UnretriableApiError as e:
+            if e.code == 4:
+                status = "error_deleted"
+            else:
+                status = f"error_{e.code}"
+            raise
+        except Exception:
+            status = "unexpected_error"
+            raise
+        finally:
+            duration = time.perf_counter() - start
+            API_REQUEST_DURATION.labels(method="get_threads", status=status).observe(duration)
 
     async def get_posts(self, tid: int, pn: int, **kwargs: Any) -> PostsDTO:
         """带限流的 get_posts_dto 调用（支持多代理轮换）。
@@ -149,8 +174,25 @@ class TaskHandler(ABC):
             PostsDTO: 回复列表数据。
         """
         client, limiter = self._get_client_and_limiter("posts")
-        async with limiter:  # type: ignore
+        with RATELIMIT_WAIT_DURATION.labels(limiter_type="posts").time():
+            await limiter.acquire()
+
+        start = time.perf_counter()
+        status = "success"
+        try:
             return await client.get_posts_dto(tid, pn, **kwargs)  # type: ignore
+        except UnretriableApiError as e:
+            if e.code == 4:
+                status = "error_deleted"
+            else:
+                status = f"error_{e.code}"
+            raise
+        except Exception:
+            status = "unexpected_error"
+            raise
+        finally:
+            duration = time.perf_counter() - start
+            API_REQUEST_DURATION.labels(method="get_posts", status=status).observe(duration)
 
     async def get_comments(self, tid: int, pid: int, pn: int = 1) -> CommentsDTO:
         """带限流的 get_comments_dto 调用（支持多代理轮换）。
@@ -164,8 +206,25 @@ class TaskHandler(ABC):
             CommentsDTO: 楼中楼列表数据。
         """
         client, limiter = self._get_client_and_limiter("comments")
-        async with limiter:  # type: ignore
+        with RATELIMIT_WAIT_DURATION.labels(limiter_type="comments").time():
+            await limiter.acquire()
+
+        start = time.perf_counter()
+        status = "success"
+        try:
             return await client.get_comments_dto(tid, pid, pn)  # type: ignore
+        except UnretriableApiError as e:
+            if e.code == 4:
+                status = "error_deleted"
+            else:
+                status = f"error_{e.code}"
+            raise
+        except Exception:
+            status = "unexpected_error"
+            raise
+        finally:
+            duration = time.perf_counter() - start
+            API_REQUEST_DURATION.labels(method="get_comments", status=status).observe(duration)
 
     async def ensure_users(self, items: Sequence[ThreadDTO | PostDTO | CommentDTO]):
         """确保用户信息已保存到数据库。
@@ -288,6 +347,7 @@ class ThreadsTaskHandler(TaskHandler):
         priority = Priority.BACKFILL_POSTS if backfill else Priority.MEDIUM
 
         for thread in new_threads:
+            SCRAPED_ITEMS.labels(type="thread", forum=thread.fname, status="success").inc(1)
             if not backfill:
                 await self.datastore.push_to_id_queue("thread", thread.tid)
                 await self.datastore.push_object_event("thread", thread)
@@ -478,6 +538,7 @@ class FullScanPostsTaskHandler(TaskHandler):
         priority = Priority.BACKFILL_POSTS if backfill else Priority.LOW
 
         for post in posts:
+            SCRAPED_ITEMS.labels(type="post", forum=post.fname, status="success").inc(1)
             if not backfill:
                 await self.datastore.push_to_id_queue("post", post.pid)
                 await self.datastore.push_object_event("post", post)
@@ -745,6 +806,7 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
         priority = Priority.BACKFILL_POSTS if backfill else Priority.LOW
 
         for post in new_posts:
+            SCRAPED_ITEMS.labels(type="post", forum=post.fname, status="success").inc(1)
             if not backfill:
                 await self.datastore.push_to_id_queue("post", post.pid)
                 await self.datastore.push_object_event("post", post)
@@ -950,6 +1012,7 @@ class FullScanCommentsTaskHandler(TaskHandler):
         await self.datastore.save_items(new_comment_models)
 
         for comment in new_comments_data:
+            SCRAPED_ITEMS.labels(type="comment", forum=comment.fname, status="success").inc(1)
             if not backfill:
                 await self.datastore.push_to_id_queue("comment", comment.cid)
                 await self.datastore.push_object_event("comment", comment)
@@ -1056,6 +1119,7 @@ class IncrementalScanCommentsTaskHandler(TaskHandler):
         await self.datastore.save_items(new_comment_models)
 
         for comment in new_comments_data:
+            SCRAPED_ITEMS.labels(type="comment", forum=comment.fname, status="success").inc(1)
             if not backfill:
                 await self.datastore.push_to_id_queue("comment", comment.cid)
                 await self.datastore.push_object_event("comment", comment)
@@ -1262,6 +1326,7 @@ class DeepScanTaskHandler(TaskHandler):
         await self.datastore.save_items(new_comment_models)
 
         for comment in new_comments:
+            SCRAPED_ITEMS.labels(type="comment", forum=comment.fname, status="success").inc(1)
             await self.datastore.push_to_id_queue("comment", comment.cid)
             await self.datastore.push_object_event("comment", comment)
 
@@ -1350,23 +1415,30 @@ class Worker:
         该方法支持优雅的取消机制，收到CancelledError时会正常退出。
         """
         self.log.info("Starting...")
+        ACTIVE_WORKERS.inc()
 
-        while True:
-            try:
-                task: Task = await self.queue.get()
-                self.log.debug("Got task: {} with priority {}.", task.content.__class__.__name__, task.priority.name)
+        try:
+            while True:
+                try:
+                    task: Task = await self.queue.get()
+                    self.log.debug(
+                        "Got task: {} with priority {}.", task.content.__class__.__name__, task.priority.name
+                    )
 
-                await self._process_task(task)
+                    await self._process_task(task)
 
-            except asyncio.CancelledError:
-                self.log.info("Cancelled. Exiting.")
-                break
-            except Exception as e:
-                self.log.exception("An unexpected error occurred in worker loop: {}", e)
-                await asyncio.sleep(1)
-            finally:
-                if "task" in locals():
-                    self.queue.task_done()
+                except asyncio.CancelledError:
+                    self.log.info("Cancelled. Exiting.")
+                    break
+                except Exception as e:
+                    WORKER_ERRORS.labels(handler_type="unknown").inc()
+                    self.log.exception("An unexpected error occurred in worker loop: {}", e)
+                    await asyncio.sleep(1)
+                finally:
+                    if "task" in locals():
+                        self.queue.task_done()
+        finally:
+            ACTIVE_WORKERS.dec()
 
     async def _process_task(self, task: Task):
         """处理单个任务。
@@ -1381,6 +1453,12 @@ class Worker:
         handler = self.handlers.get(type(content))
 
         if handler:
-            await handler.handle(content)
+            task_type = type(content).__name__
+            with TASK_DURATION.labels(type=task_type).time():
+                try:
+                    await handler.handle(content)
+                except Exception:
+                    WORKER_ERRORS.labels(handler_type=task_type).inc()
+                    raise
         else:
             self.log.warning("Unknown task type: {}", type(content))

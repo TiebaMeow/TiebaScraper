@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from tiebameow.models.orm import Comment, Forum, Post, Thread, User
 from tiebameow.utils.logger import logger
 
+from .metrics import CACHE_HITS, CACHE_MISSES, DB_OPERATIONS
 from .publisher import EventEnvelope, NoopPublisher, RedisStreamsPublisher, WebSocketPublisher, build_envelope
 
 if TYPE_CHECKING:
@@ -185,6 +186,10 @@ class DataStore:
 
         new_ids = {ids[i] for i, key in enumerate(cache_keys) if key not in cached_results}
 
+        hits = len(ids) - len(new_ids)
+        if hits > 0:
+            CACHE_HITS.labels(type=item_type).inc(hits)
+
         logger.debug("Cache filter: {} -> {} for {}", len(ids), len(new_ids), item_type)
         return new_ids
 
@@ -219,6 +224,7 @@ class DataStore:
             existing_ids = {row[0] for row in result.fetchall()}
 
         if existing_ids:
+            CACHE_MISSES.labels(type=item_type).inc(len(existing_ids))
             logger.debug("Database filter: Found {} existing IDs for {}", len(existing_ids), item_type)
             # 标记缓存由 filter_new_ids 统一处理
 
@@ -259,9 +265,12 @@ class DataStore:
             return
 
         async with self.get_session() as session:
+            table_name = "unknown"
+            op = "upsert" if upsert else "insert"
             try:
                 items_as_dicts = [item.to_dict() for item in items]
                 model_class = type(items[0])
+                table_name = model_class.__tablename__
 
                 statement = insert(model_class).values(items_as_dicts)
 
@@ -278,12 +287,15 @@ class DataStore:
 
                 await session.execute(statement)
                 await session.commit()
+                DB_OPERATIONS.labels(operation=op, table=table_name, status="success").inc(len(items))
                 logger.debug("Successfully saved/ignored {} items using ON CONFLICT.", len(items))
 
             except IntegrityError as e:
+                DB_OPERATIONS.labels(operation=op, table=table_name, status="integrity_error").inc()
                 logger.error("An unexpected integrity error occurred: {}", e)
                 raise
             except Exception as e:
+                DB_OPERATIONS.labels(operation=op, table=table_name, status="error").inc()
                 logger.error("Failed to save items: {}", e)
                 raise
 
