@@ -6,7 +6,6 @@
 import json
 import os
 from datetime import UTC, datetime
-from typing import cast
 
 import pytest
 import redis.asyncio as redis
@@ -79,16 +78,11 @@ async def test_postgres_forum_crud():
 @pytest.mark.skipif(not ON_CI, reason="Integration test only runs on CI")
 @pytest.mark.asyncio
 async def test_redis_id_queue_operations():
-    """测试 Redis ID 队列操作"""
+    """测试 Redis Stream 操作（maxlen/顺序）"""
     consumer_cfg = ConsumerConfig(
         transport="redis",
-        mode="id",
         max_len=3,
-        id_queue_key="ci:test:id:queue",
         stream_prefix="ci:test:events",
-        timeout_ms=500,
-        max_retries=3,
-        retry_backoff_ms=50,
     )
 
     rurl = _get_redis_url()
@@ -101,28 +95,36 @@ async def test_redis_id_queue_operations():
 
         # 发送多条消息，测试 maxlen 限制
         for tid in (424240, 424241, 424242, 424243):
-            await pub.publish_id("thread", tid)
+            env = EventEnvelope(
+                schema="tieba.thread.v1",
+                type="upsert",
+                object_type="thread",
+                fid=1,
+                object_id=tid,
+                time=int(datetime.now(UTC).timestamp() * 1000),
+                source="tests",
+                backfill=False,
+                payload={"tid": tid, "fid": 1},
+            )
+            await pub.publish_object(env)
 
-        # 验证队列长度不超过 maxlen
-        llen_raw = await r.execute_command("LLEN", consumer_cfg.id_queue_key)
-        llen_int = 0 if llen_raw is None else int(llen_raw)
-        assert 0 < llen_int <= consumer_cfg.max_len
+        # 验证 Stream 长度不超过 maxlen
+        stream_key = f"{consumer_cfg.stream_prefix}:1"
+        xlen = await r.xlen(stream_key)
+        assert 0 < xlen <= consumer_cfg.max_len + 1
 
-        # 验证最新的消息在队列头部
-        raw_queue_entries = await r.execute_command("LRANGE", consumer_cfg.id_queue_key, 0, -1)
-        queue_entries = cast("list[str | bytes] | None", raw_queue_entries) or []
-        ids_in_queue: list[int] = []
-        for entry in queue_entries:
-            if isinstance(entry, bytes):
-                entry = entry.decode("utf-8")
-            ids_in_queue.append(json.loads(entry)["id"])
-
-        assert ids_in_queue[0] == 424243  # 最新的在头部
+        # 验证最新的消息在最前
+        entries = await r.xrevrange(stream_key, count=1)
+        newest_entry = entries[0][1]["data"]
+        if isinstance(newest_entry, bytes):
+            newest_entry = newest_entry.decode("utf-8")
+        payload = json.loads(newest_entry)
+        assert payload["object_id"] == 424243
 
     finally:
         # 清理
         try:
-            await r.delete(consumer_cfg.id_queue_key)
+            await r.delete(f"{consumer_cfg.stream_prefix}:1")
             aclose = getattr(r, "aclose", None)
             if callable(aclose):
                 await aclose()
@@ -140,13 +142,8 @@ async def test_redis_stream_operations():
     """测试 Redis Stream 操作"""
     consumer_cfg = ConsumerConfig(
         transport="redis",
-        mode="object",
         max_len=3,
-        id_queue_key="ci:test:id:queue",
         stream_prefix="ci:test:events",
-        timeout_ms=500,
-        max_retries=3,
-        retry_backoff_ms=50,
     )
 
     rurl = _get_redis_url()
@@ -207,7 +204,6 @@ async def test_redis_stream_operations():
     finally:
         # 清理
         try:
-            await r.delete(consumer_cfg.id_queue_key)
             await r.delete(f"{consumer_cfg.stream_prefix}:1")
             aclose = getattr(r, "aclose", None)
             if callable(aclose):
@@ -230,13 +226,8 @@ async def test_postgres_and_redis_combined():
 
     consumer_cfg = ConsumerConfig(
         transport="redis",
-        mode="id",
         max_len=10,
-        id_queue_key="ci:combined:queue",
         stream_prefix="ci:combined:events",
-        timeout_ms=500,
-        max_retries=3,
-        retry_backoff_ms=50,
     )
 
     rurl = _get_redis_url()
@@ -259,8 +250,19 @@ async def test_postgres_and_redis_combined():
             sess.add(Forum(fid=test_fid, fname=test_fname))
             await sess.commit()
 
-        # 2. 推送到 Redis
-        await pub.publish_id("forum", test_fid)
+        # 2. 推送到 Redis Stream
+        env = EventEnvelope(
+            schema="tieba.forum.v1",
+            type="upsert",
+            object_type="forum",
+            fid=test_fid,
+            object_id=test_fid,
+            time=int(datetime.now(UTC).timestamp() * 1000),
+            source="tests",
+            backfill=False,
+            payload={"fid": test_fid, "fname": test_fname},
+        )
+        await pub.publish_object(env)
 
         # 3. 验证数据库
         async with session_maker() as sess:
@@ -268,14 +270,16 @@ async def test_postgres_and_redis_combined():
             forum = res.scalar_one()
             assert forum.fname == test_fname
 
-        # 4. 验证 Redis
-        raw_entry = await r.execute_command("LINDEX", consumer_cfg.id_queue_key, 0)
-        if isinstance(raw_entry, bytes):
-            raw_entry = raw_entry.decode("utf-8")
-        assert raw_entry is not None
-        entry = json.loads(raw_entry)
-        assert entry["type"] == "forum"
-        assert entry["id"] == test_fid
+        # 4. 验证 Redis Stream
+        stream_key = f"{consumer_cfg.stream_prefix}:{test_fid}"
+        entries = await r.xrevrange(stream_key, count=1)
+        assert entries
+        newest_entry = entries[0][1]["data"]
+        if isinstance(newest_entry, bytes):
+            newest_entry = newest_entry.decode("utf-8")
+        payload = json.loads(newest_entry)
+        assert payload["object_type"] == "forum"
+        assert payload["object_id"] == test_fid
 
     finally:
         # 清理数据库
@@ -293,7 +297,7 @@ async def test_postgres_and_redis_combined():
 
         # 清理 Redis
         try:
-            await r.delete(consumer_cfg.id_queue_key)
+            await r.delete(f"{consumer_cfg.stream_prefix}:{test_fid}")
             aclose = getattr(r, "aclose", None)
             if callable(aclose):
                 await aclose()

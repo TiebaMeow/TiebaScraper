@@ -116,7 +116,7 @@ class DummySessionMaker:
 class DummyConfig:
     """测试用配置模拟类"""
 
-    def __init__(self, transport: str = "redis", mode: str = "id") -> None:
+    def __init__(self, transport: str = "redis") -> None:
         self.cache_backend = "memory"
         self.cache_max_size = 100_000
         self.cache_ttl_seconds = 86400
@@ -126,26 +126,13 @@ class DummyConfig:
 
         self._consumer_config = ConsumerConfig(
             transport=transport,  # type: ignore
-            mode=mode,  # type: ignore
             max_len=16,
-            id_queue_key="test:id:queue",
             stream_prefix="test:stream",
-            timeout_ms=200,
-            max_retries=3,
-            retry_backoff_ms=10,
         )
 
     @property
     def consumer_transport(self) -> str:
         return self._consumer_config.transport
-
-    @property
-    def consumer_mode(self) -> str:
-        return self._consumer_config.mode
-
-    @consumer_mode.setter
-    def consumer_mode(self, value: str) -> None:
-        object.__setattr__(self._consumer_config, "mode", value)
 
     @property
     def consumer_config(self) -> ConsumerConfig:
@@ -256,53 +243,13 @@ async def test_filter_new_ids_with_duplicates():
 
 
 @pytest.mark.asyncio
-async def test_push_to_id_queue():
-    """测试推送到 ID 队列"""
-    DataStore._cache = None
-
-    session = DummySession(existing_ids=set())
-    redis = DummyRedis()
-    container = DummyContainer(session, redis, DummyConfig(mode="id"))
-
-    ds = DataStore(cast("Any", container))
-    ds.cache = cast("Any", DummyCache())
-
-    await ds.push_to_id_queue("post", 123)
-
-    # 验证消息被推送到 Redis 列表
-    queue_key = container.config.consumer_config.id_queue_key
-    assert queue_key in redis.lists
-    queued = redis.lists[queue_key][0]
-    assert json.loads(queued) == {"type": "post", "id": 123}
-
-
-@pytest.mark.asyncio
-async def test_push_to_id_queue_object_mode_noop():
-    """测试 object 模式下 push_to_id_queue 是 no-op"""
-    DataStore._cache = None
-
-    session = DummySession(existing_ids=set())
-    redis = DummyRedis()
-    container = DummyContainer(session, redis, DummyConfig(mode="object"))
-
-    ds = DataStore(cast("Any", container))
-    ds.cache = cast("Any", DummyCache())
-
-    await ds.push_to_id_queue("post", 123)
-
-    # object 模式下不应该推送到 ID 队列
-    queue_key = container.config.consumer_config.id_queue_key
-    assert queue_key not in redis.lists
-
-
-@pytest.mark.asyncio
 async def test_push_object_event():
     """测试推送对象事件到 Redis Stream"""
     DataStore._cache = None
 
     session = DummySession(existing_ids=set())
     redis = DummyRedis()
-    container = DummyContainer(session, redis, DummyConfig(mode="object"))
+    container = DummyContainer(session, redis, DummyConfig(transport="redis"))
 
     ds = DataStore(cast("Any", container))
     ds.cache = cast("Any", DummyCache())
@@ -365,13 +312,13 @@ async def test_push_object_event():
 
 
 @pytest.mark.asyncio
-async def test_push_object_event_id_mode_noop():
-    """测试 id 模式下 push_object_event 是 no-op"""
+async def test_push_object_event_noop_when_transport_none():
+    """测试 transport=none 时 push_object_event 是 no-op"""
     DataStore._cache = None
 
     session = DummySession(existing_ids=set())
     redis = DummyRedis()
-    container = DummyContainer(session, redis, DummyConfig(mode="id"))
+    container = DummyContainer(session, redis, DummyConfig(transport="none"))
 
     ds = DataStore(cast("Any", container))
     ds.cache = cast("Any", DummyCache())
@@ -420,7 +367,7 @@ async def test_push_object_event_id_mode_noop():
 
     await ds.push_object_event("thread", obj)
 
-    # id 模式下不应该推送到 Stream
+    # transport=none 时不应该推送到 Stream
     stream_key = f"{container.config.consumer_config.stream_prefix}:1"
     assert stream_key not in redis.streams
 

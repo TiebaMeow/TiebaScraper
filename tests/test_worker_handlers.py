@@ -77,7 +77,6 @@ async def test_threads_handler_new_threads_schedule_and_push():
         filter_new_ids=AsyncMock(return_value={thread.tid}),
         save_items=AsyncMock(),
         get_threads_by_tids=AsyncMock(return_value=[]),
-        push_to_id_queue=AsyncMock(),
         push_object_event=AsyncMock(),
     )
     queue = UniquePriorityQueue()
@@ -90,8 +89,7 @@ async def test_threads_handler_new_threads_schedule_and_push():
 
     await handler.handle(ScanThreadsTask(fid=thread.fid, fname=thread.fname, pn=1))
 
-    # 新主题帖应该推送到队列
-    datastore.push_to_id_queue.assert_awaited_once_with("thread", thread.tid)
+    # 新主题帖应该推送到对象流
     datastore.push_object_event.assert_awaited_once_with("thread", thread)
 
     # 应该生成 FullScanPostsTask
@@ -112,7 +110,6 @@ async def test_threads_handler_new_thread_zero_replies():
         filter_new_ids=AsyncMock(return_value={thread.tid}),
         save_items=AsyncMock(),
         get_threads_by_tids=AsyncMock(return_value=[]),
-        push_to_id_queue=AsyncMock(),
         push_object_event=AsyncMock(),
     )
     queue = UniquePriorityQueue()
@@ -158,7 +155,6 @@ async def test_threads_handler_old_thread_with_updates():
         filter_new_ids=AsyncMock(return_value=set()),  # 不是新帖
         save_items=AsyncMock(),
         get_threads_by_tids=AsyncMock(return_value=[stored_thread]),
-        push_to_id_queue=AsyncMock(),
         push_object_event=AsyncMock(),
     )
     queue = UniquePriorityQueue()
@@ -192,7 +188,6 @@ async def test_threads_handler_backfill_enqueues_next_page():
         filter_new_ids=AsyncMock(return_value={thread.tid}),
         save_items=AsyncMock(),
         get_threads_by_tids=AsyncMock(return_value=[]),
-        push_to_id_queue=AsyncMock(),
         push_object_event=AsyncMock(),
     )
     queue = UniquePriorityQueue()
@@ -205,8 +200,7 @@ async def test_threads_handler_backfill_enqueues_next_page():
 
     await handler.handle(ScanThreadsTask(fid=thread.fid, fname=thread.fname, pn=1, backfill=True, max_pages=5))
 
-    # 回溯模式不应该推送到 ID 队列
-    datastore.push_to_id_queue.assert_not_called()
+    # 回溯模式不应该推送对象事件
     datastore.push_object_event.assert_not_called()
 
     # 应该生成下一页的 ScanThreadsTask
@@ -231,7 +225,6 @@ async def test_threads_handler_filters_livepost():
         filter_new_ids=AsyncMock(return_value={1}),  # 只有 tid=1 是新的
         save_items=AsyncMock(),
         get_threads_by_tids=AsyncMock(return_value=[]),
-        push_to_id_queue=AsyncMock(),
         push_object_event=AsyncMock(),
     )
     queue = UniquePriorityQueue()
@@ -264,7 +257,6 @@ async def test_full_scan_posts_handler_process_page():
     datastore = SimpleNamespace(
         filter_new_ids=AsyncMock(return_value={post.pid}),
         save_items=AsyncMock(),
-        push_to_id_queue=AsyncMock(),
         push_object_event=AsyncMock(),
     )
     queue = UniquePriorityQueue()
@@ -287,7 +279,6 @@ async def test_full_scan_posts_handler_process_page():
     assert post_save_calls[0][0].pid == post.pid
 
     # 检查是否推送了事件
-    datastore.push_to_id_queue.assert_awaited_once_with("post", post.pid)
     datastore.push_object_event.assert_awaited_once_with("post", post)
 
 
@@ -304,7 +295,6 @@ async def test_full_scan_posts_handler_generates_comment_task():
     datastore = SimpleNamespace(
         filter_new_ids=AsyncMock(return_value={post.pid}),
         save_items=AsyncMock(),
-        push_to_id_queue=AsyncMock(),
         push_object_event=AsyncMock(),
     )
     queue = UniquePriorityQueue()
@@ -338,7 +328,6 @@ async def test_full_scan_posts_handler_updates_thread_metadata():
     datastore = SimpleNamespace(
         filter_new_ids=AsyncMock(return_value=set()),
         save_items=AsyncMock(),
-        push_to_id_queue=AsyncMock(),
         push_object_event=AsyncMock(),
     )
     queue = UniquePriorityQueue()
@@ -383,7 +372,6 @@ async def test_incremental_scan_posts_handler():
         filter_new_ids=AsyncMock(return_value={new_post.pid}),
         save_items=AsyncMock(),
         get_posts_by_pids=AsyncMock(return_value=[]),
-        push_to_id_queue=AsyncMock(),
         push_object_event=AsyncMock(),
         update_thread_metadata=AsyncMock(),
     )
@@ -428,7 +416,6 @@ async def test_full_scan_comments_handler():
     datastore = SimpleNamespace(
         filter_new_ids=AsyncMock(return_value={comment.cid}),
         save_items=AsyncMock(),
-        push_to_id_queue=AsyncMock(),
         push_object_event=AsyncMock(),
     )
     queue = UniquePriorityQueue()
@@ -442,7 +429,6 @@ async def test_full_scan_comments_handler():
     await handler.handle(FullScanCommentsTask(tid=1, pid=100))
 
     # 应该推送楼中楼事件
-    datastore.push_to_id_queue.assert_awaited_with("comment", comment.cid)
     datastore.push_object_event.assert_awaited_with("comment", comment)
 
 
@@ -456,7 +442,6 @@ async def test_full_scan_comments_handler_backfill_no_push():
     datastore = SimpleNamespace(
         filter_new_ids=AsyncMock(return_value={comment.cid}),
         save_items=AsyncMock(),
-        push_to_id_queue=AsyncMock(),
         push_object_event=AsyncMock(),
     )
     queue = UniquePriorityQueue()
@@ -470,7 +455,6 @@ async def test_full_scan_comments_handler_backfill_no_push():
     await handler.handle(FullScanCommentsTask(tid=1, pid=100, backfill=True))
 
     # 回溯模式不应该推送事件
-    datastore.push_to_id_queue.assert_not_called()
     datastore.push_object_event.assert_not_called()
 
 
@@ -488,7 +472,6 @@ async def test_incremental_scan_comments_handler():
     datastore = SimpleNamespace(
         filter_new_ids=AsyncMock(return_value={new_comment.cid}),  # 只有 cid=2000 是新的
         save_items=AsyncMock(),
-        push_to_id_queue=AsyncMock(),
         push_object_event=AsyncMock(),
     )
     queue = UniquePriorityQueue()
@@ -502,7 +485,7 @@ async def test_incremental_scan_comments_handler():
     await handler.handle(IncrementalScanCommentsTask(tid=1, pid=100))
 
     # 应该只推送新楼中楼
-    datastore.push_to_id_queue.assert_awaited_with("comment", new_comment.cid)
+    datastore.push_object_event.assert_awaited_with("comment", new_comment)
 
 
 # ==================== Worker 测试 ====================
@@ -521,7 +504,6 @@ async def test_worker_processes_task():
         filter_new_ids=AsyncMock(return_value={thread.tid}),
         save_items=AsyncMock(),
         get_threads_by_tids=AsyncMock(return_value=[]),
-        push_to_id_queue=AsyncMock(),
         push_object_event=AsyncMock(),
     )
     queue = UniquePriorityQueue()

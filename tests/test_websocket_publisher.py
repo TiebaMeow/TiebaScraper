@@ -20,6 +20,20 @@ def _ws_url(url: str) -> WebsocketUrl:
     return _WS_URL_ADAPTER.validate_python(url)
 
 
+def _make_envelope(object_id: int) -> EventEnvelope:
+    return EventEnvelope(
+        schema="tieba.thread.v1",
+        type="upsert",
+        object_type="thread",
+        fid=1,
+        object_id=object_id,
+        time=0,
+        source="scraper",
+        backfill=False,
+        payload={"id": object_id},
+    )
+
+
 # ==================== Mock 类 ====================
 
 
@@ -53,31 +67,6 @@ class DummyServer:
 
 
 @pytest.mark.asyncio
-async def test_websocket_publisher_publish_id():
-    """测试 WebSocketPublisher publish_id"""
-    server = WebSocketServer(_ws_url("ws://127.0.0.1:0/ws"), token=None)
-    await server.start()
-
-    pub = WebSocketPublisher(
-        _ws_url(server.get_ws_url()),
-        server=server,
-        consumer_config=ConsumerConfig(max_len=16, timeout_ms=2000, max_retries=3, retry_backoff_ms=50),
-    )
-
-    try:
-        async with ClientSession() as session:
-            async with session.ws_connect(server.get_ws_url()) as ws:
-                await pub.publish_id("thread", 123)
-                msg = await ws.receive(timeout=2.0)
-
-                assert msg.type == WSMsgType.TEXT
-                data = json.loads(msg.data)
-                assert data == {"type": "thread", "id": 123}
-    finally:
-        await pub.close()
-
-
-@pytest.mark.asyncio
 async def test_websocket_publisher_publish_object():
     """测试 WebSocketPublisher publish_object"""
     server = WebSocketServer(_ws_url("ws://127.0.0.1:0/ws"), token=None)
@@ -86,7 +75,7 @@ async def test_websocket_publisher_publish_object():
     pub = WebSocketPublisher(
         _ws_url(server.get_ws_url()),
         server=server,
-        consumer_config=ConsumerConfig(max_len=16, timeout_ms=2000, max_retries=3, retry_backoff_ms=50),
+        consumer_config=ConsumerConfig(max_len=16),
     )
 
     try:
@@ -124,7 +113,7 @@ async def test_websocket_publisher_close_idempotent():
     pub = WebSocketPublisher(
         _ws_url(server.get_ws_url()),
         server=server,
-        consumer_config=ConsumerConfig(max_len=16, timeout_ms=2000, max_retries=3, retry_backoff_ms=50),
+        consumer_config=ConsumerConfig(max_len=16),
     )
 
     # 多次 close 不应该报错
@@ -143,25 +132,25 @@ async def test_websocket_publisher_queue_drop_oldest():
     pub = WebSocketPublisher(
         _ws_url("ws://dummy"),
         server=cast("WebSocketServer", server),
-        consumer_config=ConsumerConfig(max_len=2, timeout_ms=500, max_retries=5, retry_backoff_ms=10),
+        consumer_config=ConsumerConfig(max_len=2),
     )
 
     try:
-        await pub.publish_id("thread", 1)
+        await pub.publish_object(_make_envelope(1))
         await asyncio.sleep(0)  # 让 worker 有机会启动
 
         # 快速发送多条消息
         await asyncio.gather(
-            pub.publish_id("thread", 2),
-            pub.publish_id("thread", 3),
-            pub.publish_id("thread", 4),
+            pub.publish_object(_make_envelope(2)),
+            pub.publish_object(_make_envelope(3)),
+            pub.publish_object(_make_envelope(4)),
         )
 
         await asyncio.sleep(0.6)
     finally:
         await pub.close()
 
-    ids = [json.loads(m)["id"] for m in server.messages]
+    ids = [json.loads(m)["object_id"] for m in server.messages]
     assert ids[0] == 1
     # ID 2 应该被丢弃（队列满时最旧的）
     assert 2 not in ids
@@ -177,11 +166,11 @@ async def test_websocket_publisher_retry_on_failure():
     pub = WebSocketPublisher(
         _ws_url("ws://dummy"),
         server=cast("WebSocketServer", server),
-        consumer_config=ConsumerConfig(max_len=16, timeout_ms=500, max_retries=5, retry_backoff_ms=10),
+        consumer_config=ConsumerConfig(max_len=16),
     )
 
     try:
-        await pub.publish_id("thread", 1)
+        await pub.publish_object(_make_envelope(1))
         await asyncio.sleep(0.5)
     finally:
         await pub.close()
@@ -200,12 +189,12 @@ async def test_websocket_publisher_delivers_after_subscriber_reconnects():
     pub = WebSocketPublisher(
         _ws_url(server.get_ws_url()),
         server=server,
-        consumer_config=ConsumerConfig(max_len=8, timeout_ms=1000, max_retries=5, retry_backoff_ms=50),
+        consumer_config=ConsumerConfig(max_len=8),
     )
 
     try:
         # 先发送消息（此时没有订阅者）
-        await pub.publish_id("thread", 999)
+        await pub.publish_object(_make_envelope(999))
         await asyncio.sleep(0.15)  # 让 worker 尝试发送
 
         # 现在连接订阅者
@@ -214,14 +203,14 @@ async def test_websocket_publisher_delivers_after_subscriber_reconnects():
                 msg = await ws.receive(timeout=2.0)
                 assert msg.type == WSMsgType.TEXT
                 data = json.loads(msg.data)
-                assert data == {"type": "thread", "id": 999}
+                assert data["object_id"] == 999
 
                 # 发送第二条消息
-                await pub.publish_id("thread", 1000)
+                await pub.publish_object(_make_envelope(1000))
                 msg2 = await ws.receive(timeout=2.0)
                 assert msg2.type == WSMsgType.TEXT
                 data2 = json.loads(msg2.data)
-                assert data2 == {"type": "thread", "id": 1000}
+                assert data2["object_id"] == 1000
     finally:
         await pub.close()
 

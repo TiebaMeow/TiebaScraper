@@ -26,17 +26,6 @@ class DummyRedis:
         """设置前 n 次调用失败"""
         self._fail_times = n
 
-    async def lpush(self, key, value):
-        self.calls.append(("lpush", (key, value), {}))
-        if self._fail_times > 0:
-            self._fail_times -= 1
-            raise RuntimeError("transient")
-        return 1
-
-    async def ltrim(self, key, start, stop):
-        self.calls.append(("ltrim", (key, start, stop), {}))
-        return None
-
     async def xadd(self, stream, entry, maxlen=None, approximate=None):
         self.calls.append(("xadd", (stream, entry), {"maxlen": maxlen, "approximate": approximate}))
         if self._fail_times > 0:
@@ -181,32 +170,6 @@ def test_event_envelope_to_json_bytes():
 
 
 @pytest.mark.asyncio
-async def test_redis_publisher_publish_id():
-    """测试 RedisStreamsPublisher publish_id"""
-    redis = DummyRedis()
-    pub = RedisStreamsPublisher(
-        cast("Any", redis),
-        consumer_config=ConsumerConfig(
-            max_len=10,
-            timeout_ms=50,
-            max_retries=3,
-            retry_backoff_ms=1,
-            id_queue_key="test:queue",
-        ),
-    )
-
-    await pub.publish_id("thread", 11)
-
-    # 验证 lpush 和 ltrim 被调用
-    lpush_calls = [c for c in redis.calls if c[0] == "lpush"]
-    ltrim_calls = [c for c in redis.calls if c[0] == "ltrim"]
-
-    assert len(lpush_calls) == 1
-    assert len(ltrim_calls) == 1
-    assert lpush_calls[0][1][0] == "test:queue"
-
-
-@pytest.mark.asyncio
 async def test_redis_publisher_publish_object():
     """测试 RedisStreamsPublisher publish_object"""
     redis = DummyRedis()
@@ -214,9 +177,6 @@ async def test_redis_publisher_publish_object():
         cast("Any", redis),
         consumer_config=ConsumerConfig(
             max_len=10,
-            timeout_ms=50,
-            max_retries=3,
-            retry_backoff_ms=1,
             stream_prefix="test:events",
         ),
     )
@@ -249,21 +209,32 @@ async def test_redis_publisher_retry_on_failure():
         cast("Any", redis),
         consumer_config=ConsumerConfig(
             max_len=10,
-            timeout_ms=50,
-            max_retries=5,
-            retry_backoff_ms=1,
-            id_queue_key="test:queue",
+            stream_prefix="test:events",
         ),
     )
+    pub.max_retries = 5
+    pub.retry_backoff_ms = 1
 
     # 设置前2次调用失败
     redis.set_fail_times(2)
 
-    await pub.publish_id("thread", 11)
+    env = EventEnvelope(
+        schema="tieba.thread.v1",
+        type="upsert",
+        object_type="thread",
+        fid=22,
+        object_id=11,
+        time=1000000,
+        source="scraper",
+        backfill=False,
+        payload={"tid": 11},
+    )
 
-    # 应该有3次 lpush 调用（2次失败 + 1次成功）
-    lpush_calls = [c for c in redis.calls if c[0] == "lpush"]
-    assert len(lpush_calls) == 3
+    await pub.publish_object(env)
+
+    # 应该有3次 xadd 调用（2次失败 + 1次成功）
+    xadd_calls = [c for c in redis.calls if c[0] == "xadd"]
+    assert len(xadd_calls) == 3
 
 
 @pytest.mark.asyncio
@@ -274,18 +245,29 @@ async def test_redis_publisher_retry_exhausted():
         cast("Any", redis),
         consumer_config=ConsumerConfig(
             max_len=10,
-            timeout_ms=50,
-            max_retries=3,
-            retry_backoff_ms=1,
-            id_queue_key="test:queue",
+            stream_prefix="test:events",
         ),
     )
+    pub.max_retries = 3
+    pub.retry_backoff_ms = 1
 
     # 设置所有调用失败
     redis.set_fail_times(100)
 
+    env = EventEnvelope(
+        schema="tieba.thread.v1",
+        type="upsert",
+        object_type="thread",
+        fid=22,
+        object_id=11,
+        time=1000000,
+        source="scraper",
+        backfill=False,
+        payload={"tid": 11},
+    )
+
     with pytest.raises(RuntimeError):
-        await pub.publish_id("thread", 11)
+        await pub.publish_object(env)
 
 
 @pytest.mark.asyncio
@@ -296,9 +278,6 @@ async def test_redis_publisher_maxlen():
         cast("Any", redis),
         consumer_config=ConsumerConfig(
             max_len=100,
-            timeout_ms=50,
-            max_retries=3,
-            retry_backoff_ms=1,
             stream_prefix="test:events",
         ),
     )

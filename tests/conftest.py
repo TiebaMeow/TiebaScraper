@@ -302,7 +302,6 @@ def mock_datastore():
         save_items=AsyncMock(),
         get_threads_by_tids=AsyncMock(return_value=[]),
         get_posts_by_pids=AsyncMock(return_value=[]),
-        push_to_id_queue=AsyncMock(),
         push_object_event=AsyncMock(),
         update_thread_metadata=AsyncMock(),
     )
