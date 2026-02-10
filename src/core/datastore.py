@@ -79,17 +79,13 @@ class DataStore:
                     client_side=True,
                 )
         self.cache = DataStore._cache
-
-        # 发布通道与模式
         self.consumer_transport = self.container.config.consumer_transport
-        self.consumer_mode = self.container.config.consumer_mode
-
         if self.consumer_transport == "redis":
             self.publisher = RedisStreamsPublisher(
                 self.redis,  # type: ignore
                 consumer_config=self.container.config.consumer_config,
             )
-        elif self.consumer_transport == "websocket" and self.container.config.websocket_enabled:
+        elif self.consumer_transport == "websocket":
             self.publisher = WebSocketPublisher(
                 self.container.config.websocket_url,
                 server=self.container.ws_server,
@@ -327,21 +323,6 @@ class DataStore:
             result = await session.execute(statement)
             return list(result.scalars().all())
 
-    async def push_to_id_queue(self, item_type: ItemType, item_id: int):
-        """将新处理的数据信息推送到ID队列。
-
-        将处理完成的数据项信息以JSON格式推送到Redis列表，
-        供下游消费者服务处理。
-
-        Args:
-            item_type: 数据项类型，可选值为'thread'、'post'或'comment'。
-            item_id: 数据项的ID。
-        """
-        if self.consumer_mode != "id":
-            return
-
-        await self.publisher.publish_id(item_type, item_id)
-
     async def push_object_event(
         self,
         item_type: ItemType,
@@ -350,13 +331,7 @@ class DataStore:
         backfill: bool = False,
         event_type: str = "upsert",
     ) -> None:
-        """将完整对象以事件形式推送到对象消费者（Redis Streams 或 WebSocket）。
-
-        在 config.mode != 'object' 时为 no-op。
-        """
-        if self.consumer_mode != "object":
-            return
-
+        """将完整对象以事件形式推送到对象消费者（Redis Streams 或 WebSocket）。"""
         envelope: EventEnvelope = build_envelope(item_type, obj, event_type=event_type, backfill=backfill)
         await self.publisher.publish_object(envelope)
 

@@ -39,7 +39,29 @@ db_name = "tieba_data"
 # 是否启用 PostgreSQL 分区（TimescaleDB），默认不启用
 partition_enabled = false
 # 分区间隔
-p_interval = "1 month"
+p_interval = "2 months"
+
+# 消费者配置
+[consumer]
+# 推送方式，可选"redis", "websocket"或"none"
+# 推荐使用 redis，其作为中间件能够提供高可靠性
+# websocket 无需依赖 redis，但不保证消息不丢失
+# none 为不推送
+transport = "none"
+# stream 或内部先进先出缓存队列的最大长度
+max_len = 10000
+# Redis stream 的前缀
+stream_prefix = "scraper:tieba:events"
+
+# 缓存配置
+[cache]
+# 缓存后端，可选"memory"或"redis"
+backend = "memory"
+# 缓存最大大小
+# 仅在使用内存缓存时生效，过小可能造成缓存抖动
+max_size = 100000
+# 缓存过期时间（秒）
+ttl_seconds = 86400
 
 # Redis 连接信息
 # 当缓存后端或消费者推送方式选择 redis 时需要配置
@@ -61,28 +83,35 @@ stream_request = "scraper:tieba:cmd:req"
 # 用于命令响应的回传
 stream_response = "scraper:tieba:cmd:res"
 
+# WebSocket 服务配置
+# 当消费者推送方式选择 websocket 时自动启用，否则不启用
+[websocket]
+# WebSocket Host
+host = "localhost"
+# WebSocket 端口
+port = 8000
+# WebSocket 路径（建议保持默认）
+path = "/ws"
+# 访问令牌（留空则不校验）
+token = ""
+
 # 监控配置
 [metrics]
 # 是否开启 Prometheus Metrics Server
 enabled = true
 # 监听端口
-port = 8000
+port = 8001
 
 # 限流配置
 [rate_limit]
-# 每秒请求数限制（全局）
-# 注意：此配置用于 tiebameow.Client 内部限流，实际接口限流由分接口 RPS 配置控制
-rps = 10
 # 并发数限制
 concurrency = 10
 # 遇 HTTP 429 后的全局冷却时间（秒）
 cooldown_seconds_429 = 5.0
-
 # 分接口 RPS 配置
 # 贴吧服务端对各接口独立限流，使用令牌桶算法
 # threads/posts 接口令牌桶容量≈60, 恢复速率≈2.0/s
 # comments 接口限流较宽松
-
 # get_threads 接口 RPS 限制
 threads_rps = 2.0
 # get_posts 接口 RPS 限制
@@ -114,16 +143,6 @@ password = ""
 #     "socks5://proxy3:1080",
 # ]
 
-# 缓存配置
-[cache]
-# 缓存后端，可选"memory"或"redis"
-backend = "memory"
-# 缓存最大大小
-# 仅在使用内存缓存时生效，过小可能造成缓存抖动
-max_size = 100000
-# 缓存过期时间（秒）
-ttl_seconds = 86400
-
 # 调度器配置
 [scheduler]
 # 以下配置项仅 periodic/hybrid 模式生效
@@ -144,43 +163,3 @@ enabled = false
 # 扫描深度
 # 即最多扫描前 n 页 + 后 n 页
 depth = 3
-
-# WebSocket 服务配置
-# 用于动态添加/删除监控贴吧和向客户端推送事件
-[websocket]
-# 是否启用
-# 当消费者推送方式选择 websocket 时必须启用
-enabled = true
-# WebSocket Host
-host = "localhost"
-# WebSocket 端口
-port = 8000
-# WebSocket 路径（建议保持默认）
-path = "/ws"
-# 访问令牌（留空则不校验）
-token = ""
-
-# 消费者配置
-[consumer]
-# 推送方式，可选"redis", "websocket"或"none"
-# 推荐使用 redis，其作为中间件能够提供高可靠性
-# websocket 无需依赖 redis，但不保证消息不丢失
-# none 为不推送
-transport = "websocket"
-# 推送模式，可选"id", "object"
-# id 为仅推送内容类型与 tid/pid，通过回表查询或手动 fetch 获取完整对象
-# object 为推送完整序列化后的 aiotieba 对象
-mode = "id"
-# id 队列, stream 或内部先进先出缓存队列的最大长度
-max_len = 10000
-# id 模式队列的 Redis 键
-queue_key = "scraper:tieba:queue"
-# object 模式 Redis stream 的前缀
-prefix = "scraper:tieba:events"
-# 推送重试配置
-# 超时时间（毫秒）
-timeout_ms = 2000
-# 最大重试次数
-max_retries = 5
-# 重试间隔（毫秒）
-retry_backoff_ms = 200

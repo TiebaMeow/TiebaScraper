@@ -6,6 +6,8 @@
 支持通过环境变量覆盖配置（例如 DATABASE__HOST）。
 """
 
+from __future__ import annotations
+
 import tomllib
 from pathlib import Path
 from typing import Any, Literal
@@ -21,8 +23,31 @@ from pydantic import (
     computed_field,
     model_validator,
 )
-from pydantic.fields import FieldInfo
+from pydantic.fields import FieldInfo  # noqa: TC002
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
+
+
+class TiebaConfig(BaseModel):
+    """基础配置模型"""
+
+    forums: list[str] = []
+    groups: list[ForumGroup] = []
+    max_backfill_pages: int = Field(100, gt=0)
+    backfill_force_scan: bool = False
+
+    @model_validator(mode="after")
+    def check_forums_exist(self) -> TiebaConfig:
+        if not self.forums and not self.groups:
+            pass
+        return self
+
+
+class ForumGroup(BaseModel):
+    """贴吧分组配置"""
+
+    name: str
+    forums: list[str]
+    interval_seconds: int | None = None
 
 
 class DatabaseConfig(BaseModel):
@@ -37,6 +62,22 @@ class DatabaseConfig(BaseModel):
     p_interval: str = "1 month"
 
 
+class ConsumerConfig(BaseModel):
+    """消费者推送配置"""
+
+    transport: Literal["redis", "websocket", "none"] = "none"
+    max_len: int = Field(10000, gt=0)
+    stream_prefix: str = "scraper:tieba:events"
+
+
+class CacheConfig(BaseModel):
+    """缓存配置模型"""
+
+    backend: Literal["memory", "redis"] = "memory"
+    max_size: int = Field(100000, gt=0)
+    ttl_seconds: int = Field(86400, gt=0)
+
+
 class RedisConfig(BaseModel):
     """Redis配置模型"""
 
@@ -49,98 +90,31 @@ class RedisConfig(BaseModel):
     stream_response: str = "scraper:tieba:cmd:res"
 
 
-class MetricsConfig(BaseModel):
-    """监控配置模型"""
-
-    enabled: bool = True
-    port: int = 8000
-
-
-class ForumGroup(BaseModel):
-    """贴吧分组配置"""
-
-    name: str
-    forums: list[str]
-    interval_seconds: int | None = None
-
-
-class TiebaConfig(BaseModel):
-    """贴吧相关配置模型"""
-
-    forums: list[str] = []
-    groups: list[ForumGroup] = []
-    max_backfill_pages: int = Field(100, gt=0)
-    backfill_force_scan: bool = False
-
-    @model_validator(mode="after")
-    def check_forums_exist(self) -> "TiebaConfig":
-        if not self.forums and not self.groups:
-            pass
-        return self
-
-
-class RateLimitConfig(BaseModel):
-    """请求频率限制配置模型"""
-
-    # 全局配置（向后兼容）
-    rps: int = Field(default=10, gt=0)
-    concurrency: int = Field(default=8, gt=0)
-    cooldown_seconds_429: float = Field(default=5.0, gt=0)
-
-    # 分接口 RPS 配置（可选，未设置则使用默认值）
-    # 基于测试结果：posts 令牌桶容量≈57, 恢复速率≈2.2/s
-    threads_rps: float = Field(default=2.0, gt=0, description="get_threads 接口的 RPS 限制")
-    posts_rps: float = Field(default=2.0, gt=0, description="get_posts 接口的 RPS 限制")
-    comments_rps: float = Field(default=5.0, gt=0, description="get_comments 接口的 RPS 限制")
-
-
-class CacheConfig(BaseModel):
-    """缓存配置模型"""
-
-    backend: Literal["memory", "redis"] = "memory"
-    max_size: int = Field(100000, gt=0)
-    ttl_seconds: int = Field(86400, gt=0)
-
-
-class SchedulerConfig(BaseModel):
-    """调度器配置模型"""
-
-    interval_seconds: int = Field(default=60, gt=0)
-    good_page_every_n_ticks: int = Field(default=10, gt=0)
-    # 队列感知调度：队列深度超过阈值时跳过本轮调度
-    queue_depth_threshold: int = Field(default=0, ge=0, description="队列深度阈值，0 表示禁用")
-    # 跳过调度时的等待时间（秒），避免频繁检查
-    skip_wait_seconds: int = Field(default=5, gt=0, description="跳过调度后的等待时间")
-
-
-class DeepScanConfig(BaseModel):
-    """DeepScan 深度扫描配置模型"""
-
-    enabled: bool = False
-    depth: int = Field(3, gt=0, description="扫描前 n 页 + 后 n 页")
-
-
 class WebSocketConfig(BaseModel):
     """WebSocket 模式配置"""
 
-    enabled: bool = True
     host: str = "localhost"
     port: int = 8000
     path: str = "/ws"
     token: str | None = None
 
 
-class ConsumerConfig(BaseModel):
-    """消费者推送配置"""
+class MetricsConfig(BaseModel):
+    """监控配置模型"""
 
-    transport: Literal["redis", "websocket", "none"] = "websocket"
-    mode: Literal["id", "object"] = "id"
-    max_len: int = Field(10000, gt=0)
-    id_queue_key: str = "scraper:tieba:queue"
-    stream_prefix: str = "scraper:tieba:events"
-    timeout_ms: int = Field(2000, gt=0)
-    max_retries: int = Field(5, gt=0)
-    retry_backoff_ms: int = Field(200, gt=0)
+    enabled: bool = True
+    port: int = 8001
+
+
+class RateLimitConfig(BaseModel):
+    """请求频率限制配置模型"""
+
+    concurrency: int = Field(default=10, gt=0)
+    cooldown_seconds_429: float = Field(default=5.0, gt=0)
+
+    threads_rps: float = Field(default=2.0, gt=0)
+    posts_rps: float = Field(default=2.0, gt=0)
+    comments_rps: float = Field(default=5.0, gt=0)
 
 
 class ProxyConfig(BaseModel):
@@ -193,6 +167,22 @@ class ProxyConfig(BaseModel):
         return self.enabled and len(self.urls) > 1
 
 
+class SchedulerConfig(BaseModel):
+    """调度器配置模型"""
+
+    interval_seconds: int = Field(default=60, gt=0)
+    good_page_every_n_ticks: int = Field(default=10, gt=0)
+    queue_depth_threshold: int = Field(default=0, ge=0)
+    skip_wait_seconds: int = Field(default=5, gt=0)
+
+
+class DeepScanConfig(BaseModel):
+    """DeepScan 深度扫描配置模型"""
+
+    enabled: bool = False
+    depth: int = Field(3, gt=0)
+
+
 class PydanticConfig(BaseSettings):
     """Pydantic总配置模型"""
 
@@ -214,17 +204,15 @@ class PydanticConfig(BaseSettings):
         default_factory=lambda: SchedulerConfig(interval_seconds=60, good_page_every_n_ticks=10)
     )
     deep_scan: DeepScanConfig = Field(default_factory=lambda: DeepScanConfig(enabled=False, depth=3))
-    websocket: WebSocketConfig = Field(
-        default_factory=lambda: WebSocketConfig(enabled=True, host="localhost", port=8000)
-    )
+    websocket: WebSocketConfig = Field(default_factory=lambda: WebSocketConfig(host="localhost", port=8000))
     consumer: ConsumerConfig = Field(
-        default_factory=lambda: ConsumerConfig(max_len=10000, timeout_ms=2000, max_retries=5, retry_backoff_ms=200)
+        default_factory=lambda: ConsumerConfig(transport="none", max_len=10000, stream_prefix="scraper:tieba:events")
     )
     proxy: ProxyConfig = Field(default_factory=ProxyConfig)
 
     @model_validator(mode="after")
-    def check_ports_conflict(self) -> "PydanticConfig":
-        if self.metrics.enabled and self.websocket.enabled:
+    def check_ports_conflict(self) -> PydanticConfig:
+        if self.metrics.enabled and self.consumer.transport == "websocket":
             if self.metrics.port == self.websocket.port:
                 raise ValueError(
                     f"Port conflict: Metrics server and WebSocket server are both enabled on port "
@@ -399,11 +387,6 @@ class Config:
         return self.pydantic_config.tieba.backfill_force_scan
 
     @property
-    def rps_limit(self) -> int:
-        """获取每秒请求限制。"""
-        return self.pydantic_config.rate_limit.rps
-
-    @property
     def concurrency_limit(self) -> int:
         """获取并发限制。"""
         return self.pydantic_config.rate_limit.concurrency
@@ -479,11 +462,6 @@ class Config:
         return self.pydantic_config.websocket_url
 
     @property
-    def websocket_enabled(self) -> bool:
-        """获取是否启用WebSocket。"""
-        return self.pydantic_config.websocket.enabled
-
-    @property
     def websocket_token(self) -> str | None:
         """获取WebSocket认证令牌。"""
         return self.pydantic_config.websocket.token
@@ -492,11 +470,6 @@ class Config:
     def consumer_transport(self) -> Literal["redis", "websocket", "none"]:
         """获取内容推送方式。"""
         return self.pydantic_config.consumer.transport
-
-    @property
-    def consumer_mode(self) -> Literal["id", "object"]:
-        """获取内容推送模式。"""
-        return self.pydantic_config.consumer.mode
 
     @property
     def consumer_config(self) -> ConsumerConfig:

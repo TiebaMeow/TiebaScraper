@@ -129,7 +129,7 @@ class TaskHandler(ABC):
             "posts": self.container.posts_limiter,
             "comments": self.container.comments_limiter,
         }
-        return self.container.tb_client, limiter_map.get(api_type, self.container.limiter)
+        return self.container.tb_client, limiter_map.get(api_type, self.container.threads_limiter)
 
     async def get_threads(self, fname: str, **kwargs: Any) -> ThreadsDTO:
         """带限流的 get_threads_dto 调用（支持多代理轮换）。
@@ -349,7 +349,6 @@ class ThreadsTaskHandler(TaskHandler):
         for thread in new_threads:
             SCRAPED_ITEMS.labels(type="thread", forum=thread.fname, status="success").inc(1)
             if not backfill:
-                await self.datastore.push_to_id_queue("thread", thread.tid)
                 await self.datastore.push_object_event("thread", thread)
                 self.log.debug("Pushed new thread tid={} to ID queue or object stream.", thread.tid)
 
@@ -540,9 +539,8 @@ class FullScanPostsTaskHandler(TaskHandler):
         for post in posts:
             SCRAPED_ITEMS.labels(type="post", forum=post.fname, status="success").inc(1)
             if not backfill:
-                await self.datastore.push_to_id_queue("post", post.pid)
                 await self.datastore.push_object_event("post", post)
-                self.log.debug("Pushed post pid={} to ID queue or object stream.", post.pid)
+                self.log.debug("Pushed post pid={} to object stream.", post.pid)
 
             await self.ensure_users(post.comments)
 
@@ -808,7 +806,6 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
         for post in new_posts:
             SCRAPED_ITEMS.labels(type="post", forum=post.fname, status="success").inc(1)
             if not backfill:
-                await self.datastore.push_to_id_queue("post", post.pid)
                 await self.datastore.push_object_event("post", post)
                 self.log.debug("Pushed new post pid={} to ID queue or object stream.", post.pid)
 
@@ -1014,7 +1011,6 @@ class FullScanCommentsTaskHandler(TaskHandler):
         for comment in new_comments_data:
             SCRAPED_ITEMS.labels(type="comment", forum=comment.fname, status="success").inc(1)
             if not backfill:
-                await self.datastore.push_to_id_queue("comment", comment.cid)
                 await self.datastore.push_object_event("comment", comment)
                 self.log.debug("Pushed comment cid={} to ID queue or object stream.", comment.cid)
 
@@ -1121,9 +1117,8 @@ class IncrementalScanCommentsTaskHandler(TaskHandler):
         for comment in new_comments_data:
             SCRAPED_ITEMS.labels(type="comment", forum=comment.fname, status="success").inc(1)
             if not backfill:
-                await self.datastore.push_to_id_queue("comment", comment.cid)
                 await self.datastore.push_object_event("comment", comment)
-                self.log.debug("Pushed comment cid={} to ID queue.", comment.cid)
+                self.log.debug("Pushed comment cid={} to object stream.", comment.cid)
 
         if old_cids:
             return False
@@ -1327,7 +1322,6 @@ class DeepScanTaskHandler(TaskHandler):
 
         for comment in new_comments:
             SCRAPED_ITEMS.labels(type="comment", forum=comment.fname, status="success").inc(1)
-            await self.datastore.push_to_id_queue("comment", comment.cid)
             await self.datastore.push_object_event("comment", comment)
 
         return len(new_comments)

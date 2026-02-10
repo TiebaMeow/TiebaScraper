@@ -57,7 +57,6 @@ class Container:
         """
         self.config = config
 
-        self.limiter: AsyncLimiter | None = None
         self.semaphore: asyncio.Semaphore | None = None
         # 分接口限流器（多代理模式下，每个代理有独立的限流器组）
         self.threads_limiter: AsyncLimiter | None = None
@@ -246,12 +245,11 @@ class Container:
         """
         logger.info("Initializing container resources...")
         try:
-            # 全局限流器（向后兼容，用于 tiebameow.Client 内部限流）
-            self.limiter = AsyncLimiter(1, time_period=1 / self.config.rps_limit)
+            # 全局限流
             self.semaphore = asyncio.Semaphore(self.config.concurrency_limit)
-            logger.info("Global limiter initialized with a rate of {} RPS.", self.config.rps_limit)
+            logger.info("Global concurrency limit set to {}.", self.config.concurrency_limit)
 
-            # 分接口限流器（用于 worker 层精细控制）
+            # 分接口限流器
             self.threads_limiter = AsyncLimiter(1, time_period=1 / self.config.threads_rps)
             self.posts_limiter = AsyncLimiter(1, time_period=1 / self.config.posts_rps)
             self.comments_limiter = AsyncLimiter(1, time_period=1 / self.config.comments_rps)
@@ -275,7 +273,6 @@ class Container:
                     proxy_config = AiotiebaProxyConfig(url=url)
                     client = await Client(
                         proxy=proxy_config,
-                        limiter=self.limiter,
                         semaphore=self.semaphore,
                         cooldown_429=self.config.cooldown_seconds_429,
                         retry_attempts=5,
@@ -303,7 +300,6 @@ class Container:
 
                 self.tb_client = await Client(
                     proxy=proxy_config,
-                    limiter=self.limiter,
                     semaphore=self.semaphore,
                     cooldown_429=self.config.cooldown_seconds_429,
                     retry_attempts=5,
@@ -327,7 +323,7 @@ class Container:
                     logger.warning("Redis connection failed: {}. Redis commands will be unavailable.", e)
                     self.redis_client = None
 
-            if self.config.consumer_transport == "websocket" and self.config.websocket_enabled:
+            if self.config.consumer_transport == "websocket":
                 # 启动内置 WS 服务
                 self.ws_server = WebSocketServer(self.config.websocket_url, token=self.config.websocket_token)
 

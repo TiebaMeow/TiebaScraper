@@ -67,9 +67,6 @@ class EventEnvelope:
 
 
 class Publisher:
-    async def publish_id(self, item_type: ItemType, item_id: int) -> None:
-        raise NotImplementedError
-
     async def publish_object(self, envelope: EventEnvelope) -> None:
         raise NotImplementedError
 
@@ -79,9 +76,6 @@ class Publisher:
 
 
 class NoopPublisher(Publisher):
-    async def publish_id(self, item_type: ItemType, item_id: int) -> None:
-        return
-
     async def publish_object(self, envelope: EventEnvelope) -> None:
         return
 
@@ -105,9 +99,9 @@ class WebSocketPublisher(Publisher):
             raise ValueError("WebSocketPublisher requires an existing WebSocketServer instance")
 
         self.url = url
-        self.timeout_ms = consumer_config.timeout_ms
-        self.max_retries = consumer_config.max_retries
-        self.retry_backoff_ms = consumer_config.retry_backoff_ms
+        self.timeout_ms = 2000
+        self.max_retries = 5
+        self.retry_backoff_ms = 200
         self.queue_capacity = consumer_config.max_len
 
         self._server = server
@@ -210,19 +204,6 @@ class WebSocketPublisher(Publisher):
         finally:
             logger.debug("WebSocketPublisher worker stopped")
 
-    async def publish_id(self, item_type: ItemType, item_id: int) -> None:
-        payload = {"type": item_type, "id": int(item_id)}
-        try:
-            if _orjson is not None:
-                message = _orjson.dumps(payload).decode("utf-8")
-            else:
-                message = json.dumps(payload)
-        except Exception:
-            message = f'{{"type":"{item_type}","id":{int(item_id)}}}'
-
-        self._ensure_worker()
-        await self._enqueue(message)
-
     async def publish_object(self, envelope: EventEnvelope) -> None:
         data = envelope.to_json_bytes().decode("utf-8")
 
@@ -273,10 +254,9 @@ class RedisStreamsPublisher(Publisher):
         self.redis = redis_client
         self.stream_prefix = consumer_config.stream_prefix
         self.maxlen = consumer_config.max_len
-        self.timeout_ms = consumer_config.timeout_ms
-        self.max_retries = consumer_config.max_retries
-        self.retry_backoff_ms = consumer_config.retry_backoff_ms
-        self.id_queue_key = consumer_config.id_queue_key
+        self.timeout_ms = 2000
+        self.max_retries = 5
+        self.retry_backoff_ms = 200
 
     async def _retry(self, func: Callable[[], Awaitable[Any]], *, fail_log_msg: str) -> Any:
         try:
@@ -298,26 +278,6 @@ class RedisStreamsPublisher(Publisher):
         except Exception as e:
             logger.exception("{} after {} retries: {}", fail_log_msg, self.max_retries, e)
             raise
-
-    async def publish_id(self, item_type: ItemType, item_id: int) -> None:
-        payload = {"type": item_type, "id": int(item_id)}
-        try:
-            if _orjson is not None:
-                message = _orjson.dumps(payload).decode("utf-8")
-            else:
-                message = json.dumps(payload)
-        except Exception:
-            message = f'{{"type":"{item_type}","id":{int(item_id)}}}'
-
-        await self._retry(
-            lambda: self.redis.lpush(self.id_queue_key, message),  # type: ignore
-            fail_log_msg=f"Failed to enqueue to list={self.id_queue_key}",
-        )
-
-        try:
-            await self.redis.ltrim(self.id_queue_key, 0, self.maxlen - 1)  # type: ignore
-        except Exception:
-            pass
 
     async def publish_object(self, envelope: EventEnvelope) -> None:
         stream = f"{self.stream_prefix}:{envelope.fid}"
