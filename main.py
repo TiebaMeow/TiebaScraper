@@ -16,6 +16,7 @@ from prometheus_client import start_http_server
 from tiebameow.utils.logger import init_logger, logger
 
 from src.core import DataStore, initialize_application
+from src.core.monitor import SystemMonitor
 from src.scraper import Scheduler, Worker
 
 init_logger(
@@ -162,9 +163,13 @@ async def main(mode: Literal["periodic", "backfill", "hybrid"] = "periodic"):
     """
     container, task_queue = await initialize_application(mode=mode)
 
+    monitor_task: asyncio.Task | None = None
     if container.config.metrics_enabled:
         start_http_server(container.config.metrics_port)
         logger.info("Prometheus metrics server started on port {}", container.config.metrics_port)
+
+        monitor = SystemMonitor(container)
+        monitor_task = asyncio.create_task(monitor.run(), name="system-monitor")
 
     tasks: list[asyncio.Task] = []
     datastore: DataStore | None = None
@@ -198,6 +203,13 @@ async def main(mode: Literal["periodic", "backfill", "hybrid"] = "periodic"):
     except Exception as e:
         logger.exception("Application failed to start or run: {}", e)
     finally:
+        if monitor_task and not monitor_task.done():
+            monitor_task.cancel()
+            try:
+                await monitor_task
+            except asyncio.CancelledError:
+                pass
+
         for t in tasks:
             if not t.done():
                 t.cancel()
