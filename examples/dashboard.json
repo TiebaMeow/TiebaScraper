@@ -148,7 +148,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(tiebascraper_scraped_items_total{status=\"success\", forum=~\"$forum\"}[$__rate_interval]))",
+          "expr": "sum(rate(tiebascraper_scraped_items_total{status=\"success\", forum=~\"$forum\", instance=~\"$instance\"}[$__rate_interval]))",
           "legendFormat": "",
           "refId": "A"
         }
@@ -207,7 +207,7 @@
       },
       "targets": [
         {
-          "expr": "tiebascraper_active_workers",
+          "expr": "tiebascraper_active_workers{instance=~\"$instance\"}",
           "legendFormat": "",
           "refId": "A"
         }
@@ -266,7 +266,7 @@
       },
       "targets": [
         {
-          "expr": "sum(tiebascraper_queue_size)",
+          "expr": "sum(tiebascraper_queue_size{instance=~\"$instance\"})",
           "legendFormat": "",
           "refId": "A"
         }
@@ -327,7 +327,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(tiebascraper_scraped_items_total{status=\"error\", forum=~\"$forum\"}[$__rate_interval])) / clamp_min(sum(rate(tiebascraper_scraped_items_total{forum=~\"$forum\"}[$__rate_interval])), 1)",
+          "expr": "sum(rate(tiebascraper_scraped_items_total{status=\"error\", forum=~\"$forum\", instance=~\"$instance\"}[$__rate_interval])) / clamp_min(sum(rate(tiebascraper_scraped_items_total{forum=~\"$forum\", instance=~\"$instance\"}[$__rate_interval])), 1)",
           "legendFormat": "",
           "refId": "A"
         }
@@ -387,7 +387,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(tiebascraper_cache_hits_total[$__rate_interval])) / clamp_min(sum(rate(tiebascraper_cache_hits_total[$__rate_interval])) + sum(rate(tiebascraper_cache_misses_total[$__rate_interval])), 1)",
+          "expr": "sum(rate(tiebascraper_cache_hits_total{instance=~\"$instance\"}[$__rate_interval])) / clamp_min(sum(rate(tiebascraper_cache_hits_total{instance=~\"$instance\"}[$__rate_interval])) + sum(rate(tiebascraper_cache_misses_total{instance=~\"$instance\"}[$__rate_interval])), 1)",
           "legendFormat": "",
           "refId": "A"
         }
@@ -438,7 +438,7 @@
       },
       "targets": [
         {
-          "expr": "sum(tiebascraper_periodic_forums_count) + sum(tiebascraper_backfill_forums_count)",
+          "expr": "sum(tiebascraper_periodic_forums_count{instance=~\"$instance\"}) + sum(tiebascraper_backfill_forums_count{instance=~\"$instance\"})",
           "legendFormat": "总计",
           "refId": "A"
         }
@@ -489,7 +489,7 @@
       },
       "targets": [
         {
-          "expr": "time() - process_start_time_seconds",
+          "expr": "time() - process_start_time_seconds{instance=~\"$instance\"}",
           "legendFormat": "",
           "refId": "A"
         }
@@ -564,49 +564,49 @@
       ],
       "targets": [
         {
-          "expr": "tiebascraper_active_workers",
+          "expr": "tiebascraper_active_workers{instance=~\"$instance\"}",
           "legendFormat": "活跃 Workers",
           "refId": "A",
           "instant": true
         },
         {
-          "expr": "sum(tiebascraper_queue_size)",
+          "expr": "sum(tiebascraper_queue_size{instance=~\"$instance\"})",
           "legendFormat": "队列总深度",
           "refId": "B",
           "instant": true
         },
         {
-          "expr": "sum(tiebascraper_periodic_forums_count)",
+          "expr": "sum(tiebascraper_periodic_forums_count{instance=~\"$instance\"})",
           "legendFormat": "Periodic 贴吧数",
           "refId": "C",
           "instant": true
         },
         {
-          "expr": "sum(tiebascraper_backfill_forums_count)",
+          "expr": "sum(tiebascraper_backfill_forums_count{instance=~\"$instance\"})",
           "legendFormat": "Backfill 贴吧数",
           "refId": "D",
           "instant": true
         },
         {
-          "expr": "sum(tiebascraper_scraped_items_total{status=\"success\", forum=~\"$forum\"})",
+          "expr": "sum(tiebascraper_scraped_items_total{status=\"success\", forum=~\"$forum\", instance=~\"$instance\"})",
           "legendFormat": "累计成功爬取",
           "refId": "E",
           "instant": true
         },
         {
-          "expr": "sum(tiebascraper_scraped_items_total{status=\"error\", forum=~\"$forum\"})",
+          "expr": "sum(tiebascraper_scraped_items_total{status=\"error\", forum=~\"$forum\", instance=~\"$instance\"})",
           "legendFormat": "累计爬取错误",
           "refId": "F",
           "instant": true
         },
         {
-          "expr": "sum(tiebascraper_worker_errors_total)",
+          "expr": "sum(tiebascraper_worker_errors_total{instance=~\"$instance\"})",
           "legendFormat": "累计 Worker 错误",
           "refId": "G",
           "instant": true
         },
         {
-          "expr": "sum(tiebascraper_db_operations_total{status!=\"success\"})",
+          "expr": "sum(tiebascraper_db_operations_total{status!=\"success\", instance=~\"$instance\"})",
           "legendFormat": "累计 DB 错误",
           "refId": "H",
           "instant": true
@@ -676,7 +676,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (type) (rate(tiebascraper_scraped_items_total{status=\"success\", forum=~\"$forum\"}[$__rate_interval]))",
+          "expr": "sum by (type) (rate(tiebascraper_scraped_items_total{status=\"success\", forum=~\"$forum\", instance=~\"$instance\"}[$__rate_interval]))",
           "legendFormat": "{{type}}",
           "refId": "A"
         }
@@ -731,7 +731,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (forum) (rate(tiebascraper_scraped_items_total{status=\"success\", forum=~\"$forum\"}[$__rate_interval]))",
+          "expr": "sum by (forum) (rate(tiebascraper_scraped_items_total{status=\"success\", forum=~\"$forum\", instance=~\"$instance\"}[$__rate_interval]))",
           "legendFormat": "{{forum}}",
           "refId": "A"
         }
@@ -784,7 +784,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (type, forum) (rate(tiebascraper_scraped_items_total{status=\"error\", forum=~\"$forum\"}[$__rate_interval]))",
+          "expr": "sum by (type, forum) (rate(tiebascraper_scraped_items_total{status=\"error\", forum=~\"$forum\", instance=~\"$instance\"}[$__rate_interval]))",
           "legendFormat": "{{type}} / {{forum}}",
           "refId": "A"
         }
@@ -834,7 +834,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (type) (tiebascraper_scraped_items_total{status=\"success\", forum=~\"$forum\"})",
+          "expr": "sum by (type) (tiebascraper_scraped_items_total{status=\"success\", forum=~\"$forum\", instance=~\"$instance\"})",
           "legendFormat": "{{type}}",
           "refId": "A"
         }
@@ -884,7 +884,7 @@
       },
       "targets": [
         {
-          "expr": "topk(10, sum by (forum) (tiebascraper_scraped_items_total{status=\"success\", forum=~\"$forum\"}))",
+          "expr": "topk(10, sum by (forum) (tiebascraper_scraped_items_total{status=\"success\", forum=~\"$forum\", instance=~\"$instance\"}))",
           "legendFormat": "{{forum}}",
           "refId": "A"
         }
@@ -937,7 +937,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (handler_type) (rate(tiebascraper_worker_errors_total[$__rate_interval]))",
+          "expr": "sum by (handler_type) (rate(tiebascraper_worker_errors_total{instance=~\"$instance\"}[$__rate_interval]))",
           "legendFormat": "{{handler_type}}",
           "refId": "A"
         }
@@ -1001,17 +1001,17 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum by (type, le) (rate(tiebascraper_task_duration_seconds_bucket[$__rate_interval])))",
+          "expr": "histogram_quantile(0.50, sum by (type, le) (rate(tiebascraper_task_duration_seconds_bucket{instance=~\"$instance\"}[$__rate_interval])))",
           "legendFormat": "{{type}} p50",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.90, sum by (type, le) (rate(tiebascraper_task_duration_seconds_bucket[$__rate_interval])))",
+          "expr": "histogram_quantile(0.90, sum by (type, le) (rate(tiebascraper_task_duration_seconds_bucket{instance=~\"$instance\"}[$__rate_interval])))",
           "legendFormat": "{{type}} p90",
           "refId": "B"
         },
         {
-          "expr": "histogram_quantile(0.99, sum by (type, le) (rate(tiebascraper_task_duration_seconds_bucket[$__rate_interval])))",
+          "expr": "histogram_quantile(0.99, sum by (type, le) (rate(tiebascraper_task_duration_seconds_bucket{instance=~\"$instance\"}[$__rate_interval])))",
           "legendFormat": "{{type}} p99",
           "refId": "C"
         }
@@ -1063,17 +1063,17 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum by (method, le) (rate(tiebascraper_api_request_duration_seconds_bucket[$__rate_interval])))",
+          "expr": "histogram_quantile(0.50, sum by (method, le) (rate(tiebascraper_api_request_duration_seconds_bucket{instance=~\"$instance\"}[$__rate_interval])))",
           "legendFormat": "{{method}} p50",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.90, sum by (method, le) (rate(tiebascraper_api_request_duration_seconds_bucket[$__rate_interval])))",
+          "expr": "histogram_quantile(0.90, sum by (method, le) (rate(tiebascraper_api_request_duration_seconds_bucket{instance=~\"$instance\"}[$__rate_interval])))",
           "legendFormat": "{{method}} p90",
           "refId": "B"
         },
         {
-          "expr": "histogram_quantile(0.99, sum by (method, le) (rate(tiebascraper_api_request_duration_seconds_bucket[$__rate_interval])))",
+          "expr": "histogram_quantile(0.99, sum by (method, le) (rate(tiebascraper_api_request_duration_seconds_bucket{instance=~\"$instance\"}[$__rate_interval])))",
           "legendFormat": "{{method}} p99",
           "refId": "C"
         }
@@ -1119,7 +1119,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (le) (increase(tiebascraper_api_request_duration_seconds_bucket[$__rate_interval]))",
+          "expr": "sum by (le) (increase(tiebascraper_api_request_duration_seconds_bucket{instance=~\"$instance\"}[$__rate_interval]))",
           "legendFormat": "{{le}}",
           "refId": "A",
           "format": "heatmap"
@@ -1172,17 +1172,17 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum by (limiter_type, le) (rate(tiebascraper_ratelimit_wait_seconds_bucket[$__rate_interval])))",
+          "expr": "histogram_quantile(0.50, sum by (limiter_type, le) (rate(tiebascraper_ratelimit_wait_seconds_bucket{instance=~\"$instance\"}[$__rate_interval])))",
           "legendFormat": "{{limiter_type}} p50",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.90, sum by (limiter_type, le) (rate(tiebascraper_ratelimit_wait_seconds_bucket[$__rate_interval])))",
+          "expr": "histogram_quantile(0.90, sum by (limiter_type, le) (rate(tiebascraper_ratelimit_wait_seconds_bucket{instance=~\"$instance\"}[$__rate_interval])))",
           "legendFormat": "{{limiter_type}} p90",
           "refId": "B"
         },
         {
-          "expr": "histogram_quantile(0.99, sum by (limiter_type, le) (rate(tiebascraper_ratelimit_wait_seconds_bucket[$__rate_interval])))",
+          "expr": "histogram_quantile(0.99, sum by (limiter_type, le) (rate(tiebascraper_ratelimit_wait_seconds_bucket{instance=~\"$instance\"}[$__rate_interval])))",
           "legendFormat": "{{limiter_type}} p99",
           "refId": "C"
         }
@@ -1237,7 +1237,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (method) (rate(tiebascraper_api_request_duration_seconds_count[$__rate_interval]))",
+          "expr": "sum by (method) (rate(tiebascraper_api_request_duration_seconds_count{instance=~\"$instance\"}[$__rate_interval]))",
           "legendFormat": "{{method}}",
           "refId": "A"
         }
@@ -1290,7 +1290,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (method, status) (rate(tiebascraper_api_request_duration_seconds_count{status=~\"error_.*|unexpected_error\"}[$__rate_interval]))",
+          "expr": "sum by (method, status) (rate(tiebascraper_api_request_duration_seconds_count{status=~\"error_.*|unexpected_error\", instance=~\"$instance\"}[$__rate_interval]))",
           "legendFormat": "{{method}} [{{status}}]",
           "refId": "A"
         }
@@ -1342,17 +1342,17 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum by (le) (rate(tiebascraper_event_loop_lag_seconds_bucket[$__rate_interval])))",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(tiebascraper_event_loop_lag_seconds_bucket{instance=~\"$instance\"}[$__rate_interval])))",
           "legendFormat": "p50",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.90, sum by (le) (rate(tiebascraper_event_loop_lag_seconds_bucket[$__rate_interval])))",
+          "expr": "histogram_quantile(0.90, sum by (le) (rate(tiebascraper_event_loop_lag_seconds_bucket{instance=~\"$instance\"}[$__rate_interval])))",
           "legendFormat": "p90",
           "refId": "B"
         },
         {
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(tiebascraper_event_loop_lag_seconds_bucket[$__rate_interval])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(tiebascraper_event_loop_lag_seconds_bucket{instance=~\"$instance\"}[$__rate_interval])))",
           "legendFormat": "p99",
           "refId": "C"
         }
@@ -1408,7 +1408,7 @@
       },
       "targets": [
         {
-          "expr": "tiebascraper_queue_size",
+          "expr": "tiebascraper_queue_size{instance=~\"$instance\"}",
           "legendFormat": "priority={{priority}}",
           "refId": "A"
         }
@@ -1456,7 +1456,7 @@
       },
       "targets": [
         {
-          "expr": "tiebascraper_active_workers",
+          "expr": "tiebascraper_active_workers{instance=~\"$instance\"}",
           "legendFormat": "active workers",
           "refId": "A"
         }
@@ -1523,7 +1523,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (operation) (rate(tiebascraper_db_operations_total{status=\"success\"}[$__rate_interval]))",
+          "expr": "sum by (operation) (rate(tiebascraper_db_operations_total{status=\"success\", instance=~\"$instance\"}[$__rate_interval]))",
           "legendFormat": "{{operation}}",
           "refId": "A"
         }
@@ -1578,7 +1578,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (table) (rate(tiebascraper_db_operations_total{status=\"success\"}[$__rate_interval]))",
+          "expr": "sum by (table) (rate(tiebascraper_db_operations_total{status=\"success\", instance=~\"$instance\"}[$__rate_interval]))",
           "legendFormat": "{{table}}",
           "refId": "A"
         }
@@ -1631,7 +1631,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (operation, table, status) (rate(tiebascraper_db_operations_total{status!=\"success\"}[$__rate_interval]))",
+          "expr": "sum by (operation, table, status) (rate(tiebascraper_db_operations_total{status!=\"success\", instance=~\"$instance\"}[$__rate_interval]))",
           "legendFormat": "{{operation}} / {{table}} [{{status}}]",
           "refId": "A"
         }
@@ -1699,12 +1699,12 @@
       },
       "targets": [
         {
-          "expr": "sum by (type) (rate(tiebascraper_cache_hits_total[$__rate_interval]))",
+          "expr": "sum by (type) (rate(tiebascraper_cache_hits_total{instance=~\"$instance\"}[$__rate_interval]))",
           "legendFormat": "hit: {{type}}",
           "refId": "A"
         },
         {
-          "expr": "sum by (type) (rate(tiebascraper_cache_misses_total[$__rate_interval]))",
+          "expr": "sum by (type) (rate(tiebascraper_cache_misses_total{instance=~\"$instance\"}[$__rate_interval]))",
           "legendFormat": "miss: {{type}}",
           "refId": "B"
         }
@@ -1758,7 +1758,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (type) (rate(tiebascraper_cache_hits_total[$__rate_interval])) / clamp_min(sum by (type) (rate(tiebascraper_cache_hits_total[$__rate_interval])) + sum by (type) (rate(tiebascraper_cache_misses_total[$__rate_interval])), 1)",
+          "expr": "sum by (type) (rate(tiebascraper_cache_hits_total{instance=~\"$instance\"}[$__rate_interval])) / clamp_min(sum by (type) (rate(tiebascraper_cache_hits_total{instance=~\"$instance\"}[$__rate_interval])) + sum by (type) (rate(tiebascraper_cache_misses_total{instance=~\"$instance\"}[$__rate_interval])), 1)",
           "legendFormat": "{{type}}",
           "refId": "A"
         }
@@ -1832,22 +1832,22 @@
       },
       "targets": [
         {
-          "expr": "tiebascraper_db_pool_connections{state=\"capacity\"}",
+          "expr": "tiebascraper_db_pool_connections{state=\"capacity\", instance=~\"$instance\"}",
           "legendFormat": "capacity",
           "refId": "A"
         },
         {
-          "expr": "tiebascraper_db_pool_connections{state=\"acquired\"}",
+          "expr": "tiebascraper_db_pool_connections{state=\"acquired\", instance=~\"$instance\"}",
           "legendFormat": "acquired",
           "refId": "B"
         },
         {
-          "expr": "tiebascraper_db_pool_connections{state=\"available\"}",
+          "expr": "tiebascraper_db_pool_connections{state=\"available\", instance=~\"$instance\"}",
           "legendFormat": "available",
           "refId": "C"
         },
         {
-          "expr": "tiebascraper_db_pool_connections{state=\"overflow\"}",
+          "expr": "tiebascraper_db_pool_connections{state=\"overflow\", instance=~\"$instance\"}",
           "legendFormat": "overflow",
           "refId": "D"
         }
@@ -1861,12 +1861,34 @@
       {
         "current": {},
         "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "name": "instance",
+        "options": [],
+        "query": {
+          "query": "label_values(tiebascraper_scraped_items_total, instance)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "label": "实例"
+      },
+      {
+        "current": {},
+        "hide": 0,
         "includeAll": true,
         "multi": true,
         "name": "forum",
         "options": [],
         "query": {
-          "query": "label_values(tiebascraper_scraped_items_total, forum)",
+          "query": "label_values(tiebascraper_scraped_items_total{instance=~\"$instance\"}, forum)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 2,
