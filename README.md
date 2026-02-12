@@ -121,21 +121,21 @@ uv run main.py --mode hybrid
 
 当程序运行在实时监控模式或混合模式时，你可以在 `config.toml` 中配置通过 WebSocket/Redis 将内容推送到审查服务进行处理。你可以在 [examples](./examples) 目录下找到消费者示例和反序列化示例。
 
-开启推送后，程序会推送完整序列化后的对象，你可以直接获得完整数据，并可通过 [tiebameow](https://github.com/TiebaMeow/tiebameow/blob/main/src/tiebameow/serializer/serializer.py) 提供的反序列化函数反序列化得到完整的 `tiebameow` DTO 对象，但会带来更大的消息体与更大的序列化/反序列化开销。DTO 对象的定义请参考 [tiebameow/models/dto.py](https://github.com/TiebaMeow/tiebameow/blob/main/src/tiebameow/models/dto.py)。
-
-如果你希望 `TiebaScraper` -> `内容审查服务` 的消息推送足够可靠，或者说你不希望漏掉任何一条内容，推荐使用 Redis。Redis Streams 可以保证消息不丢失，并且可以通过消费者组来实现多实例水平扩展。详细原理可参考 [Redis Streams 官方文档](https://redis.io/docs/latest/develop/data-types/streams/) 或 [中文教程](https://redis.com.cn/redis-stream.html)。
+开启推送后，程序会推送完整序列化后的对象，你可以直接获得完整数据，并可通过 [tiebameow](https://github.com/TiebaMeow/tiebameow/blob/main/src/tiebameow/serializer/serializer.py) 提供的反序列化函数反序列化得到完整的 `tiebameow` DTO 对象。DTO 对象的定义请参考 [tiebameow/models/dto.py](https://github.com/TiebaMeow/tiebameow/blob/main/src/tiebameow/models/dto.py)。
 
 TiebaMeow 提供了一个基于 NoneBot2 的 QQ 机器人 [TiebaManageBot](https://github.com/TiebaMeow/TiebaManageBot)，你可以使用它提供的无缝集成来快速配置简单的内容审查服务。你也可以使用任何你喜欢的技术栈来实现审查服务，只要它能够连接到 WebSocket/Redis 并处理消息即可。
 
 ### Prometheus 监控
 
-`TiebaScraper` 内置了 Prometheus 监控指标，你可以在配置文件中启用它：
+`TiebaScraper` 内置了 Prometheus 监控指标，可在配置文件中启用：
 
 ```toml
 [metrics]
 enabled = true
 port = 8001
 ```
+
+你可以在 [examples](./examples) 目录下找到 Prometheus 和 Grafana 的配置示例。
 
 ### 动态添加/删除贴吧
 
