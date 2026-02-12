@@ -19,8 +19,8 @@ class DummyCache:
     def __init__(self) -> None:
         self._kv: dict[str, object] = {}
 
-    async def get_many(self, *keys: str) -> dict[str, object]:
-        return {k: self._kv[k] for k in keys if k in self._kv}
+    async def get_many(self, *keys: str) -> tuple[object | None, ...]:
+        return tuple(self._kv.get(k) for k in keys)
 
     async def set_many(self, mapping: dict[str, object], expire: int | float | None = None) -> None:
         self._kv.update(mapping)

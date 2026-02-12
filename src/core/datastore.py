@@ -180,7 +180,7 @@ class DataStore:
         cache_keys = [f"{item_type}:{item_id}" for item_id in ids]
         cached_results = await self.cache.get_many(*cache_keys)
 
-        new_ids = {ids[i] for i, key in enumerate(cache_keys) if key not in cached_results}
+        new_ids = {ids[i] for i, val in enumerate(cached_results) if val is None}
 
         hits = len(ids) - len(new_ids)
         if hits > 0:
