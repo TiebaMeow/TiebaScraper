@@ -18,6 +18,8 @@ from tiebameow.utils.logger import init_logger, logger
 from src.core import DataStore, initialize_application
 from src.core.monitor import SystemMonitor
 from src.scraper import Scheduler, Worker
+from src.scraper.router import QueueRouter
+from src.scraper.tasks import FullScanCommentsTask, FullScanPostsTask, IncrementalScanCommentsTask, Priority, Task
 
 init_logger(
     service_name="TiebaScraper",
@@ -28,19 +30,49 @@ init_logger(
 GRACEFUL_SHUTDOWN_TIMEOUT = 60
 
 
-async def _run_periodic_mode(scheduler: Scheduler, workers: list[Worker], task_queue) -> None:
+async def _recover_pending_tasks(datastore: DataStore, router: QueueRouter) -> None:
+    """启动时恢复未完成任务并重新入队。"""
+    pending_threads = await datastore.get_all_pending_thread_scans()
+    pending_comments = await datastore.get_all_pending_comment_scans()
+
+    for pending in pending_threads:
+        task = Task(
+            priority=Priority.BACKFILL_POSTS if pending.backfill else Priority.MEDIUM,
+            content=FullScanPostsTask(tid=pending.tid, backfill=pending.backfill),
+        )
+        await router.put(task)
+
+    for pending in pending_comments:
+        if pending.task_kind == "incremental":
+            content = IncrementalScanCommentsTask(tid=pending.tid, pid=pending.pid, backfill=pending.backfill)
+            priority = Priority.BACKFILL_POSTS if pending.backfill else Priority.MEDIUM
+        else:
+            content = FullScanCommentsTask(tid=pending.tid, pid=pending.pid, backfill=pending.backfill)
+            priority = Priority.BACKFILL_POSTS if pending.backfill else Priority.LOW
+
+        await router.put(Task(priority=priority, content=content))
+
+    if pending_threads or pending_comments:
+        logger.info(
+            "Recovered pending tasks on startup: threads={}, comments={}",
+            len(pending_threads),
+            len(pending_comments),
+        )
+
+
+async def _run_periodic_mode(scheduler: Scheduler, workers: list[Worker], router: QueueRouter) -> None:
     """运行周期模式，支持优雅退出。
 
     优雅退出流程：
     1. 收到取消信号后，停止调度器（不再生成新任务）
-    2. 等待任务队列清空（带超时）
+    2. 等待所有通道队列清空（带超时）
     3. 取消所有 Worker
     """
     tasks: list[asyncio.Task] = []
 
     scheduler_task = asyncio.create_task(scheduler.run(mode="periodic"), name="scheduler")
     tasks.append(scheduler_task)
-    tasks.extend(asyncio.create_task(w.run(), name=f"worker-{i}") for i, w in enumerate(workers))
+    tasks.extend(asyncio.create_task(w.run(), name=f"worker-{w.lane}-{w.worker_id}") for w in workers)
 
     try:
         await asyncio.shield(asyncio.gather(*tasks))
@@ -59,17 +91,20 @@ async def _run_periodic_mode(scheduler: Scheduler, workers: list[Worker], task_q
                 except asyncio.CancelledError:
                     pass
 
-        queue_size = task_queue.qsize()
-        if queue_size > 0:
+        total_remaining = router.total_qsize()
+        if total_remaining > 0:
             logger.info(
-                "Waiting for {} tasks in queue to complete (timeout={}s)...", queue_size, GRACEFUL_SHUTDOWN_TIMEOUT
+                "Waiting for {} tasks across all lanes to complete (timeout={}s)...",
+                total_remaining,
+                GRACEFUL_SHUTDOWN_TIMEOUT,
             )
             try:
-                await asyncio.wait_for(task_queue.join(), timeout=GRACEFUL_SHUTDOWN_TIMEOUT)
+                join_tasks = [q.join() for q in router.lanes.values()]
+                await asyncio.wait_for(asyncio.gather(*join_tasks), timeout=GRACEFUL_SHUTDOWN_TIMEOUT)
                 logger.info("All queued tasks completed.")
             except TimeoutError:
-                remaining = task_queue.qsize()
-                logger.warning("Graceful shutdown timeout. {} tasks remaining in queue.", remaining)
+                remaining = router.total_qsize()
+                logger.warning("Graceful shutdown timeout. {} tasks remaining across all lanes.", remaining)
 
         worker_tasks = [t for t in tasks if t.get_name().startswith("worker-")]
         for t in worker_tasks:
@@ -82,14 +117,14 @@ async def _run_periodic_mode(scheduler: Scheduler, workers: list[Worker], task_q
         raise
 
 
-async def _run_hybrid_mode(scheduler: Scheduler, workers: list[Worker], task_queue) -> None:
+async def _run_hybrid_mode(scheduler: Scheduler, workers: list[Worker], router: QueueRouter) -> None:
     """运行混合模式，支持优雅退出。
 
     混合模式同时运行周期调度器和回溯调度器。
     优雅退出流程：
     1. 收到取消信号后，停止周期调度器（不再生成新任务）
     2. 等待回溯调度器完成（如果还在运行）
-    3. 等待任务队列清空（带超时）
+    3. 等待所有通道队列清空（带超时）
     4. 取消所有 Worker
     """
     tasks: list[asyncio.Task] = []
@@ -100,7 +135,7 @@ async def _run_hybrid_mode(scheduler: Scheduler, workers: list[Worker], task_que
     backfill_task = asyncio.create_task(scheduler.run(mode="backfill"), name="scheduler-backfill")
     tasks.append(backfill_task)
 
-    tasks.extend(asyncio.create_task(w.run(), name=f"worker-{i}") for i, w in enumerate(workers))
+    tasks.extend(asyncio.create_task(w.run(), name=f"worker-{w.lane}-{w.worker_id}") for w in workers)
 
     try:
         await asyncio.shield(asyncio.gather(*tasks))
@@ -131,17 +166,20 @@ async def _run_hybrid_mode(scheduler: Scheduler, workers: list[Worker], task_que
                 except asyncio.CancelledError:
                     pass
 
-        queue_size = task_queue.qsize()
-        if queue_size > 0:
+        total_remaining = router.total_qsize()
+        if total_remaining > 0:
             logger.info(
-                "Waiting for {} tasks in queue to complete (timeout={}s)...", queue_size, GRACEFUL_SHUTDOWN_TIMEOUT
+                "Waiting for {} tasks across all lanes to complete (timeout={}s)...",
+                total_remaining,
+                GRACEFUL_SHUTDOWN_TIMEOUT,
             )
             try:
-                await asyncio.wait_for(task_queue.join(), timeout=GRACEFUL_SHUTDOWN_TIMEOUT)
+                join_tasks = [q.join() for q in router.lanes.values()]
+                await asyncio.wait_for(asyncio.gather(*join_tasks), timeout=GRACEFUL_SHUTDOWN_TIMEOUT)
                 logger.info("All queued tasks completed.")
             except TimeoutError:
-                remaining = task_queue.qsize()
-                logger.warning("Graceful shutdown timeout. {} tasks remaining in queue.", remaining)
+                remaining = router.total_qsize()
+                logger.warning("Graceful shutdown timeout. {} tasks remaining across all lanes.", remaining)
 
         worker_tasks = [t for t in tasks if t.get_name().startswith("worker-")]
         for t in worker_tasks:
@@ -161,7 +199,7 @@ async def main(mode: Literal["periodic", "backfill", "hybrid"] = "periodic"):
     - backfill: 一次性回溯调度器 + 多 worker；等待队列清空后优雅退出。
     - hybrid: 周期调度器常驻 + 回溯调度器跑一轮 + 多 worker。
     """
-    container, task_queue = await initialize_application(mode=mode)
+    container, router = await initialize_application(mode=mode)
 
     monitor_task: asyncio.Task | None = None
     if container.config.metrics_enabled:
@@ -177,24 +215,48 @@ async def main(mode: Literal["periodic", "backfill", "hybrid"] = "periodic"):
         logger.info("Starting application in {} mode.", mode)
 
         datastore = DataStore(container)
-        scheduler = Scheduler(queue=task_queue, container=container)
-        worker_count = 3 if mode == "periodic" else 5
-        workers = [Worker(i, task_queue, container, datastore) for i in range(worker_count)]
+        scheduler = Scheduler(router=router, container=container)
+
+        # 按通道创建 Worker 组
+        workers: list[Worker] = []
+        worker_id = 0
+        lane_counts: dict[Literal["threads", "posts", "comments"], int] = {
+            "threads": container.config.worker_threads,
+            "posts": container.config.worker_posts,
+            "comments": container.config.worker_comments,
+        }
+        for lane_name, count in lane_counts.items():
+            queue = router.get_queue(lane_name)
+            for _ in range(count):
+                w = Worker(worker_id, queue, container, datastore, router, lane=lane_name)
+                workers.append(w)
+                worker_id += 1
+
+        logger.info(
+            "Created {} workers: threads={}, posts={}, comments={}",
+            len(workers),
+            lane_counts["threads"],
+            lane_counts["posts"],
+            lane_counts["comments"],
+        )
+
+        await _recover_pending_tasks(datastore, router)
 
         if mode == "periodic":
-            await _run_periodic_mode(scheduler, workers, task_queue)
+            await _run_periodic_mode(scheduler, workers, router)
 
         elif mode == "backfill":
             scheduler_task = asyncio.create_task(scheduler.run(mode="backfill"), name="scheduler")
-            worker_tasks = [asyncio.create_task(w.run(), name=f"worker-{i}") for i, w in enumerate(workers)]
+            worker_tasks = [asyncio.create_task(w.run(), name=f"worker-{w.lane}-{w.worker_id}") for w in workers]
             tasks.append(scheduler_task)
             tasks.extend(worker_tasks)
 
             await scheduler_task
-            await task_queue.join()
+            join_tasks = [q.join() for q in router.lanes.values()]
+            await asyncio.gather(*join_tasks)
 
         else:  # hybrid
-            await _run_hybrid_mode(scheduler, workers, task_queue)
+            await _run_hybrid_mode(scheduler, workers, router)
 
     except asyncio.CancelledError:
         logger.info("Received cancellation in {} mode.", mode)

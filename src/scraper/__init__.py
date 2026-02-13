@@ -6,7 +6,8 @@
 - 各种任务定义和处理器
 """
 
+from .router import QueueRouter
 from .scheduler import Scheduler
 from .worker import Worker
 
-__all__ = ["Scheduler", "Worker"]
+__all__ = ["QueueRouter", "Scheduler", "Worker"]

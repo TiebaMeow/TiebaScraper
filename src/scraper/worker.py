@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import time
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from aiotieba.enums import PostSortType
 from tiebameow.client.tieba_client import UnretriableApiError
@@ -33,6 +33,7 @@ from ..core.metrics import (
     TASK_DURATION,
     WORKER_ERRORS,
 )
+from ..core.models import PendingThreadScan
 from .tasks import (
     DeepScanTask,
     FullScanCommentsTask,
@@ -51,7 +52,9 @@ if TYPE_CHECKING:
     from tiebameow.models.dto import CommentDTO, CommentsDTO, PostDTO, PostsDTO, ThreadDTO, ThreadsDTO
 
     from ..core import Container, DataStore
+    from ..core.lock import LockManager
     from .queue import UniquePriorityQueue
+    from .router import QueueRouter
 
 
 class TaskHandler(ABC):
@@ -61,20 +64,28 @@ class TaskHandler(ABC):
         worker_id: Worker ID，用于日志标识。
         container: 依赖注入容器。
         datastore: 数据存储层实例。
-        queue: 任务队列，用于生成新的子任务。
+        router: 多通道队列路由器，用于向正确的通道投递子任务。
+        lock_manager: 分布式锁管理器。
         log: 日志记录器。
     """
 
-    def __init__(self, worker_id: int, container: Container, datastore: DataStore, queue: UniquePriorityQueue):
+    def __init__(
+        self,
+        worker_id: int,
+        container: Container,
+        datastore: DataStore,
+        router: QueueRouter,
+    ):
         self.worker_id = worker_id
         self.container = container
         self.datastore = datastore
-        self.queue = queue
+        self.router = router
+        self.lock_manager: LockManager = container.lock_manager
         self.batch_size = 100
         self.log = logger.bind(name=f"Worker-{worker_id}")
 
     async def try_acquire_lock(self, key: str, ttl: int = 300) -> bool:
-        """尝试获取锁。优先使用Redis，降级使用内存锁。
+        """尝试获取锁。
 
         Args:
             key: 锁的唯一标识键。
@@ -83,28 +94,11 @@ class TaskHandler(ABC):
         Returns:
             bool: 是否成功获取锁。
         """
-        if self.container.redis_client:
-            return await self.container.redis_client.set(key, "1", ex=ttl, nx=True)
-        else:
-            async with Worker._get_memory_lock_guard():
-                now = time.time()
-                expired = [k for k, t in Worker._memory_locks.items() if now > t]
-                for k in expired:
-                    Worker._memory_locks.pop(k, None)
-
-                if key in Worker._memory_locks:
-                    return False
-
-                Worker._memory_locks[key] = now + ttl
-                return True
+        return await self.lock_manager.acquire(key, ttl)
 
     async def release_lock(self, key: str):
         """释放锁（幂等操作）。"""
-        if self.container.redis_client:
-            await self.container.redis_client.delete(key)
-        else:
-            async with Worker._get_memory_lock_guard():
-                Worker._memory_locks.pop(key, None)
+        await self.lock_manager.release(key)
 
     def _get_client_and_limiter(self, api_type: Literal["threads", "posts", "comments"]) -> tuple[Any, Any]:
         """获取客户端和对应的限流器（支持多代理轮换）。
@@ -319,7 +313,7 @@ class ThreadsTaskHandler(TaskHandler):
                     max_pages=max_pages,
                     force=task_content.force,
                 )
-                await self.queue.put(Task(priority=Priority.BACKFILL_THREADS, content=next_task_content))
+                await self.router.put(Task(priority=Priority.BACKFILL_THREADS, content=next_task_content))
                 self.log.info("[{}吧] Scheduled backfill ScanThreadsTask, pn={}", fname, pn + 1)
 
         except Exception as e:
@@ -330,12 +324,14 @@ class ThreadsTaskHandler(TaskHandler):
 
         主要流程：
         1. 确保用户信息已保存
-        2. 非回溯模式下推送到消费者队列
-        3. 生成回复全量扫描任务（携带元数据用于延迟更新）
+        2. 立即保存 thread 元数据到 thread 表
+        3. 非回溯模式下推送到消费者队列
+        4. 对有回复的 thread 写入 pending_scan 标记并生成全量扫描任务
 
         Args:
             threads_data: aiotieba返回的Threads对象。
             new_tids: 新主题贴的tid集合。
+            backfill: 是否为回溯任务。
         """
         if not new_tids:
             return
@@ -344,36 +340,33 @@ class ThreadsTaskHandler(TaskHandler):
 
         await self.ensure_users(new_threads)
 
+        # 原子保存：新 thread 元数据 + pending_scan 标记
+        thread_models = [Thread.from_dto(t) for t in new_threads]
+        pending_scans = [
+            PendingThreadScan(tid=t.tid, fid=t.fid, fname=t.fname, backfill=backfill)
+            for t in new_threads
+            if t.reply_num > 0
+        ]
+        await self.datastore.save_threads_and_pending_scans(thread_models, pending_scans)
+
         priority = Priority.BACKFILL_POSTS if backfill else Priority.MEDIUM
 
         for thread in new_threads:
-            SCRAPED_ITEMS.labels(type="thread", forum=thread.fname, status="success").inc(1)
+            SCRAPED_ITEMS.labels(type="thread", forum=thread.fname).inc(1)
             if not backfill:
                 await self.datastore.push_object_event("thread", thread)
                 self.log.debug("Pushed new thread tid={} to ID queue or object stream.", thread.tid)
 
             if thread.reply_num == 0:
-                t_model = Thread.from_dto(thread)
-                await self.datastore.save_items([t_model], upsert=True)
                 self.log.debug("Thread tid={} has no replies, saved metadata only.", thread.tid)
                 continue
 
-            lock_key = f"tieba:scrapper:lock:tid:{thread.tid}"
-            if not await self.try_acquire_lock(lock_key):
-                continue
-
-            try:
-                new_task_content = FullScanPostsTask(
-                    tid=thread.tid,
-                    backfill=backfill,
-                    thread_dto=thread,
-                )
-                await self.queue.put(Task(priority=priority, content=new_task_content))
-                self.log.info("[{}吧] Scheduled FullScanPostsTask for new tid={}", thread.fname, thread.tid)
-            except Exception as e:
-                self.log.exception("Failed to schedule FullScanPostsTask for tid={}: {}", thread.tid, e)
-            finally:
-                await self.release_lock(lock_key)
+            new_task_content = FullScanPostsTask(
+                tid=thread.tid,
+                backfill=backfill,
+            )
+            await self.router.put(Task(priority=priority, content=new_task_content))
+            self.log.info("[{}吧] Scheduled FullScanPostsTask for new tid={}", thread.fname, thread.tid)
 
     async def _process_old_threads(self, threads_data: ThreadsDTO, old_tids: set[int], backfill: bool):
         """处理已存在的主题贴，检查是否有更新。
@@ -381,11 +374,11 @@ class ThreadsTaskHandler(TaskHandler):
         主要流程：
         1. 对比已存储的主题贴的最后回复时间，检查是否有更新
         2. 如果有更新，生成增量扫描任务
-        3. 生成回复增量扫描任务（携带元数据用于延迟更新）
 
         Args:
             threads_data: aiotieba返回的Threads对象。
             old_tids: 已存在主题贴的tid集合。
+            backfill: 是否为回溯任务。
         """
         if not old_tids:
             return
@@ -399,41 +392,27 @@ class ThreadsTaskHandler(TaskHandler):
         for thread_data in old_threads:
             stored_thread = stored_threads_map.get(thread_data.tid)
             if stored_thread and thread_data.last_time > stored_thread.last_time:
-                lock_key = f"tieba:scrapper:lock:tid:{thread_data.tid}"
-                if not await self.try_acquire_lock(lock_key):
-                    continue
+                self.log.debug(
+                    "Thread tid={} has updates. Reply count: {} -> {}",
+                    thread_data.tid,
+                    stored_thread.reply_num,
+                    thread_data.reply_num,
+                )
 
-                try:
-                    self.log.debug(
-                        "Thread tid={} has updates. Reply count: {} -> {}",
-                        thread_data.tid,
-                        stored_thread.reply_num,
-                        thread_data.reply_num,
-                    )
-
-                    update_task_content = IncrementalScanPostsTask(
-                        tid=thread_data.tid,
-                        stored_last_time=stored_thread.last_time,
-                        stored_reply_num=stored_thread.reply_num,
-                        backfill=backfill,
-                        target_last_time=thread_data.last_time,
-                        target_reply_num=thread_data.reply_num,
-                    )
-                    await self.queue.put(Task(priority=priority, content=update_task_content))
-                    self.log.info(
-                        "[{}吧] Scheduled IncrementalScanPostsTask for updated tid={}",
-                        thread_data.fname,
-                        thread_data.tid,
-                    )
-                except Exception as e:
-                    self.log.exception(
-                        "Failed to schedule IncrementalScanPostsTask for tid={}: {}",
-                        thread_data.tid,
-                        e,
-                    )
-                    raise
-                finally:
-                    await self.release_lock(lock_key)
+                update_task_content = IncrementalScanPostsTask(
+                    tid=thread_data.tid,
+                    stored_last_time=stored_thread.last_time,
+                    stored_reply_num=stored_thread.reply_num,
+                    backfill=backfill,
+                    target_last_time=thread_data.last_time,
+                    target_reply_num=thread_data.reply_num,
+                )
+                await self.router.put(Task(priority=priority, content=update_task_content))
+                self.log.info(
+                    "[{}吧] Scheduled IncrementalScanPostsTask for updated tid={}",
+                    thread_data.fname,
+                    thread_data.tid,
+                )
 
 
 class FullScanPostsTaskHandler(TaskHandler):
@@ -493,27 +472,26 @@ class FullScanPostsTaskHandler(TaskHandler):
 
                 pn += 1
 
-            # 任务完成后更新元数据
-            if task_content.thread_dto:
-                t_model = Thread.from_dto(task_content.thread_dto)
-                await self.datastore.save_items([t_model], upsert=True)
-                self.log.debug("Updated thread metadata for tid={} after full scan.", tid)
+            # 任务完成后：移除 pending_scan 标记
+            await self._finalize_thread(tid)
 
         except UnretriableApiError as e:
             if e.code == 4:
                 self.log.warning(
-                    "Thread tid={} may have been deleted (err_code=4). Saving thread metadata from previous crawl.", tid
+                    "Thread tid={} may have been deleted (err_code=4). Saving thread metadata from pending scan.", tid
                 )
-                if task_content.thread_dto:
-                    t_model = Thread.from_dto(task_content.thread_dto)
-                    await self.datastore.save_items([t_model], upsert=True)
-                    self.log.debug("Updated thread metadata for tid={} after deletion detected.", tid)
+                await self._finalize_thread(tid)
             else:
                 self.log.exception("Failed to process ScanThreadTask for tid={}: {}", tid, e)
         except Exception as e:
             self.log.exception("Failed to process ScanThreadTask for tid={}: {}", tid, e)
         finally:
             await self.release_lock(lock_key)
+
+    async def _finalize_thread(self, tid: int) -> None:
+        """移除 pending_scan 标记，表示该 thread 的全量扫描已完成。"""
+        await self.datastore.remove_pending_thread_scan(tid)
+        self.log.debug("Removed pending_scan marker for tid={}.", tid)
 
     async def _process_posts_on_page(self, tid: int, posts_page: PostsDTO, backfill: bool):
         """处理单个页面上的所有回复。
@@ -537,7 +515,7 @@ class FullScanPostsTaskHandler(TaskHandler):
         priority = Priority.BACKFILL_POSTS if backfill else Priority.LOW
 
         for post in posts:
-            SCRAPED_ITEMS.labels(type="post", forum=post.fname, status="success").inc(1)
+            SCRAPED_ITEMS.labels(type="post", forum=post.fname).inc(1)
             if not backfill:
                 await self.datastore.push_object_event("post", post)
                 self.log.debug("Pushed post pid={} to object stream.", post.pid)
@@ -548,8 +526,14 @@ class FullScanPostsTaskHandler(TaskHandler):
             await self.datastore.save_items(comment_models)
 
             if post.reply_num > 10 or len(post.comments) != post.reply_num:
+                await self.datastore.add_pending_comment_scan(
+                    tid=tid,
+                    pid=post.pid,
+                    backfill=backfill,
+                    task_kind="full",
+                )
                 comment_task = FullScanCommentsTask(tid=tid, pid=post.pid, backfill=backfill)
-                await self.queue.put(Task(priority=priority, content=comment_task))
+                await self.router.put(Task(priority=priority, content=comment_task))
                 self.log.info("[{}吧] Scheduled FullScanCommentsTask for pid={} in tid={}", post.fname, post.pid, tid)
 
 
@@ -631,7 +615,7 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
                     total_pages=start_pn,
                     expected_new_comments=expected_new,
                 )
-                await self.queue.put(Task(priority=Priority.BACKGROUND, content=deep_task))
+                await self.router.put(Task(priority=Priority.BACKGROUND, content=deep_task))
         except UnretriableApiError as e:
             if e.code == 4:
                 self.log.warning(
@@ -815,14 +799,20 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
         priority = Priority.BACKFILL_POSTS if backfill else Priority.LOW
 
         for post in new_posts:
-            SCRAPED_ITEMS.labels(type="post", forum=post.fname, status="success").inc(1)
+            SCRAPED_ITEMS.labels(type="post", forum=post.fname).inc(1)
             if not backfill:
                 await self.datastore.push_object_event("post", post)
                 self.log.debug("Pushed new post pid={} to ID queue or object stream.", post.pid)
 
             if post.reply_num > 10 or len(post.comments) != post.reply_num:
+                await self.datastore.add_pending_comment_scan(
+                    tid=post.tid,
+                    pid=post.pid,
+                    backfill=backfill,
+                    task_kind="full",
+                )
                 comment_task = FullScanCommentsTask(tid=post.tid, pid=post.pid, backfill=backfill)
-                await self.queue.put(Task(priority=priority, content=comment_task))
+                await self.router.put(Task(priority=priority, content=comment_task))
                 self.log.info(
                     "[{}吧] Scheduled FullScanCommentsTask for new pid={} in tid={}",
                     post.fname,
@@ -867,12 +857,18 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
                 )
                 posts_to_update.append(post_data)
 
+                await self.datastore.add_pending_comment_scan(
+                    tid=post_data.tid,
+                    pid=post_data.pid,
+                    backfill=backfill,
+                    task_kind="incremental",
+                )
                 update_task_content = IncrementalScanCommentsTask(
                     tid=post_data.tid,
                     pid=post_data.pid,
                     backfill=backfill,
                 )
-                await self.queue.put(Task(priority=priority, content=update_task_content))
+                await self.router.put(Task(priority=priority, content=update_task_content))
                 self.log.info(
                     "[{}吧] Scheduled IncrementalScanCommentsTask for updated pid={}",
                     post_data.fname,
@@ -951,6 +947,7 @@ class FullScanCommentsTaskHandler(TaskHandler):
 
             await self._scan_comment_pages(tid, pid, initial_page_data, backfill)
 
+            await self._finalize_comment_scan(tid, pid)
             self.log.debug("Finished comment scan for pid={} in tid={}.", pid, tid)
         except UnretriableApiError as e:
             if e.code == 4:
@@ -959,10 +956,16 @@ class FullScanCommentsTaskHandler(TaskHandler):
                     pid,
                     tid,
                 )
+                await self._finalize_comment_scan(tid, pid)
             else:
                 self.log.exception("Failed to process ScanPostCommentsTask for pid={}, tid={}: {}", pid, tid, e)
         except Exception as e:
             self.log.exception("Failed to process ScanPostCommentsTask for pid={}, tid={}: {}", pid, tid, e)
+
+    async def _finalize_comment_scan(self, tid: int, pid: int) -> None:
+        """移除 pending_comment_scan 标记，表示该评论扫描任务已完成。"""
+        await self.datastore.remove_pending_comment_scan(tid, pid)
+        self.log.debug("Removed pending_comment_scan marker for tid={}, pid={}", tid, pid)
 
     async def _scan_comment_pages(self, tid: int, pid: int, initial_page_data: CommentsDTO, backfill: bool):
         """扫描楼中楼的所有页面。
@@ -1028,7 +1031,7 @@ class FullScanCommentsTaskHandler(TaskHandler):
         await self.datastore.save_items(new_comment_models)
 
         for comment in new_comments_data:
-            SCRAPED_ITEMS.labels(type="comment", forum=comment.fname, status="success").inc(1)
+            SCRAPED_ITEMS.labels(type="comment", forum=comment.fname).inc(1)
             if not backfill:
                 await self.datastore.push_object_event("comment", comment)
                 self.log.debug("Pushed comment cid={} to ID queue or object stream.", comment.cid)
@@ -1059,11 +1062,13 @@ class IncrementalScanCommentsTaskHandler(TaskHandler):
 
             if not comments_page or not comments_page.objs:
                 self.log.debug("No comments found for pid={} in tid={}. Task finished.", pid, tid)
+                await self._finalize_comment_scan(tid, pid)
                 return
 
             total_pages = comments_page.page.total_page
 
             await self._scan_comment_pages(tid, pid, total_pages, comments_page, backfill)
+            await self._finalize_comment_scan(tid, pid)
         except UnretriableApiError as e:
             if e.code == 4:
                 self.log.warning(
@@ -1071,10 +1076,16 @@ class IncrementalScanCommentsTaskHandler(TaskHandler):
                     pid,
                     tid,
                 )
+                await self._finalize_comment_scan(tid, pid)
             else:
                 self.log.exception("Failed to process IncrementalScanCommentsTask for pid={}, tid={}: {}", pid, tid, e)
         except Exception as e:
             self.log.exception("Failed to process IncrementalScanCommentsTask for pid={}, tid={}: {}", pid, tid, e)
+
+    async def _finalize_comment_scan(self, tid: int, pid: int) -> None:
+        """移除 pending_comment_scan 标记，表示该评论扫描任务已完成。"""
+        await self.datastore.remove_pending_comment_scan(tid, pid)
+        self.log.debug("Removed pending_comment_scan marker for tid={}, pid={}", tid, pid)
 
     async def _scan_comment_pages(
         self,
@@ -1142,7 +1153,7 @@ class IncrementalScanCommentsTaskHandler(TaskHandler):
         await self.datastore.save_items(new_comment_models)
 
         for comment in new_comments_data:
-            SCRAPED_ITEMS.labels(type="comment", forum=comment.fname, status="success").inc(1)
+            SCRAPED_ITEMS.labels(type="comment", forum=comment.fname).inc(1)
             if not backfill:
                 await self.datastore.push_object_event("comment", comment)
                 self.log.debug("Pushed comment cid={} to object stream.", comment.cid)
@@ -1314,7 +1325,7 @@ class DeepScanTaskHandler(TaskHandler):
                         pid=post.pid,
                         backfill=False,
                     )
-                    await self.queue.put(Task(priority=Priority.MEDIUM, content=update_task))
+                    await self.router.put(Task(priority=Priority.MEDIUM, content=update_task))
                     self.log.info(
                         "DeepScan: Scheduled IncrementalScanCommentsTask for pid={} in tid={}.",
                         post.pid,
@@ -1355,7 +1366,7 @@ class DeepScanTaskHandler(TaskHandler):
         await self.datastore.save_items(new_comment_models)
 
         for comment in new_comments:
-            SCRAPED_ITEMS.labels(type="comment", forum=comment.fname, status="success").inc(1)
+            SCRAPED_ITEMS.labels(type="comment", forum=comment.fname).inc(1)
             await self.datastore.push_object_event("comment", comment)
 
         return len(new_comments)
@@ -1364,39 +1375,19 @@ class DeepScanTaskHandler(TaskHandler):
 class Worker:
     """工作器类，负责处理任务队列中的任务。
 
-    工作器是爬虫系统的核心执行单元，负责：
-    1. 从任务队列中获取任务
-    2. 根据任务类型选择相应的处理器
-    3. 执行具体的爬取和数据处理逻辑
-    4. 处理异常和错误恢复
-
-    每个工作器实例都包含所有类型的任务处理器，可以处理任何类型的任务。
+    每个 Worker 从指定通道的 ``UniquePriorityQueue`` 中消费任务。
+    多通道架构下，每条通道（threads / posts / comments）拥有独立的
+    Worker 组，各自消耗对应 API 的限速配额。
 
     Attributes:
         worker_id: 工作器的唯一标识ID。
-        queue: 任务优先队列。
+        lane: 通道名称（threads / posts / comments）。
+        queue: 该通道的任务优先队列。
         container: 依赖注入容器。
         datastore: 数据存储层实例。
         log: 日志记录器。
         handlers: 任务类型到处理器的映射字典。
     """
-
-    _memory_locks: ClassVar[dict[str, float]] = {}
-    _memory_lock_guard: ClassVar[asyncio.Lock | None] = None
-
-    @classmethod
-    def _get_memory_lock_guard(cls) -> asyncio.Lock:
-        """获取内存锁的保护锁（惰性初始化）。
-
-        使用 asyncio.Lock 保护 _memory_locks 字典的并发访问，
-        防止多个协程同时修改导致的竞态条件。
-
-        Returns:
-            asyncio.Lock: 用于保护 _memory_locks 的异步锁。
-        """
-        if cls._memory_lock_guard is None:
-            cls._memory_lock_guard = asyncio.Lock()
-        return cls._memory_lock_guard
 
     def __init__(
         self,
@@ -1404,51 +1395,47 @@ class Worker:
         queue: UniquePriorityQueue,
         container: Container,
         datastore: DataStore,
+        router: QueueRouter,
+        *,
+        lane: str = "unknown",
     ):
         """初始化 Worker。
 
         Args:
             worker_id: Worker 的唯一标识 ID。
-            queue: 任务优先队列。
+            queue: 该通道的任务优先队列。
             container: 依赖注入容器。
             datastore: 数据存储层实例。
+            router: 多通道队列路由器。
+            lane: 通道名称，用于日志标识。
         """
         self.worker_id = worker_id
+        self.lane = lane
         self.queue = queue
         self.container = container
         self.datastore = datastore
-        self.log = logger.bind(worker_id=worker_id)
+        self.log = logger.bind(worker_id=worker_id, lane=lane)
 
         # 初始化任务处理器
         self.handlers = {
-            ScanThreadsTask: ThreadsTaskHandler(worker_id, container, self.datastore, queue),
-            FullScanPostsTask: FullScanPostsTaskHandler(worker_id, container, self.datastore, queue),
-            IncrementalScanPostsTask: IncrementalScanPostsTaskHandler(worker_id, container, self.datastore, queue),
-            FullScanCommentsTask: FullScanCommentsTaskHandler(worker_id, container, self.datastore, queue),
-            IncrementalScanCommentsTask: IncrementalScanCommentsTaskHandler(
-                worker_id, container, self.datastore, queue
-            ),
-            DeepScanTask: DeepScanTaskHandler(worker_id, container, self.datastore, queue),
+            ScanThreadsTask: ThreadsTaskHandler(worker_id, container, datastore, router),
+            FullScanPostsTask: FullScanPostsTaskHandler(worker_id, container, datastore, router),
+            IncrementalScanPostsTask: IncrementalScanPostsTaskHandler(worker_id, container, datastore, router),
+            FullScanCommentsTask: FullScanCommentsTaskHandler(worker_id, container, datastore, router),
+            IncrementalScanCommentsTask: IncrementalScanCommentsTaskHandler(worker_id, container, datastore, router),
+            DeepScanTask: DeepScanTaskHandler(worker_id, container, datastore, router),
         }
 
     async def run(self):
-        """工作器主循环，持续从队列中获取并处理任务。
-
-        工作器会持续运行，直到收到取消信号。在处理过程中会：
-        1. 从优先队列获取任务（阻塞等待）
-        2. 根据任务类型调用相应的处理器
-        3. 处理异常并记录错误日志
-        4. 确保调用task_done()标记任务完成
-
-        该方法支持优雅的取消机制，收到CancelledError时会正常退出。
-        """
-        self.log.info("Starting...")
+        """工作器主循环，持续从队列中获取并处理任务。"""
+        self.log.info("Starting ({} lane)...", self.lane)
         ACTIVE_WORKERS.inc()
 
         try:
             while True:
+                task: Task | None = None
                 try:
-                    task: Task = await self.queue.get()
+                    task = await self.queue.get()
                     self.log.debug(
                         "Got task: {} with priority {}.", task.content.__class__.__name__, task.priority.name
                     )
@@ -1463,8 +1450,8 @@ class Worker:
                     self.log.exception("An unexpected error occurred in worker loop: {}", e)
                     await asyncio.sleep(1)
                 finally:
-                    if "task" in locals():
-                        self.queue.task_done()
+                    if task is not None:
+                        self.queue.task_done(task)
         finally:
             ACTIVE_WORKERS.dec()
 

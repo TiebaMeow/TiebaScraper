@@ -148,7 +148,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(tiebascraper_scraped_items_total{status=\"success\", forum=~\"$forum\", instance=~\"$instance\"}[$__rate_interval]))",
+          "expr": "sum(rate(tiebascraper_scraped_items_total{forum=~\"$forum\", instance=~\"$instance\"}[$__rate_interval]))",
           "legendFormat": "",
           "refId": "A"
         }
@@ -274,7 +274,7 @@
     },
     {
       "id": 4,
-      "title": "错误率",
+      "title": "API 错误率",
       "type": "stat",
       "gridPos": {
         "h": 4,
@@ -327,7 +327,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(tiebascraper_scraped_items_total{status=\"error\", forum=~\"$forum\", instance=~\"$instance\"}[$__rate_interval])) / clamp_min(sum(rate(tiebascraper_scraped_items_total{forum=~\"$forum\", instance=~\"$instance\"}[$__rate_interval])), 1)",
+          "expr": "sum(rate(tiebascraper_api_request_duration_seconds_count{status=~\"error_.*|unexpected_error\", instance=~\"$instance\"}[$__rate_interval])) / clamp_min(sum(rate(tiebascraper_api_request_duration_seconds_count{instance=~\"$instance\"}[$__rate_interval])), 1)",
           "legendFormat": "",
           "refId": "A"
         }
@@ -588,14 +588,14 @@
           "instant": true
         },
         {
-          "expr": "sum(tiebascraper_scraped_items_total{status=\"success\", forum=~\"$forum\", instance=~\"$instance\"})",
+          "expr": "sum(tiebascraper_scraped_items_total{forum=~\"$forum\", instance=~\"$instance\"})",
           "legendFormat": "累计成功爬取",
           "refId": "E",
           "instant": true
         },
         {
-          "expr": "sum(tiebascraper_scraped_items_total{status=\"error\", forum=~\"$forum\", instance=~\"$instance\"})",
-          "legendFormat": "累计爬取错误",
+          "expr": "sum(tiebascraper_api_request_duration_seconds_count{status=~\"error_.*|unexpected_error\", instance=~\"$instance\"})",
+          "legendFormat": "累计 API 错误",
           "refId": "F",
           "instant": true
         },
@@ -676,7 +676,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (type) (rate(tiebascraper_scraped_items_total{status=\"success\", forum=~\"$forum\", instance=~\"$instance\"}[$__rate_interval]))",
+          "expr": "sum by (type) (rate(tiebascraper_scraped_items_total{forum=~\"$forum\", instance=~\"$instance\"}[$__rate_interval]))",
           "legendFormat": "{{type}}",
           "refId": "A"
         }
@@ -731,7 +731,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (forum) (rate(tiebascraper_scraped_items_total{status=\"success\", forum=~\"$forum\", instance=~\"$instance\"}[$__rate_interval]))",
+          "expr": "sum by (forum) (rate(tiebascraper_scraped_items_total{forum=~\"$forum\", instance=~\"$instance\"}[$__rate_interval]))",
           "legendFormat": "{{forum}}",
           "refId": "A"
         }
@@ -739,7 +739,7 @@
     },
     {
       "id": 12,
-      "title": "爬取错误速率",
+      "title": "API 错误速率 (按方法)",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
@@ -784,8 +784,8 @@
       },
       "targets": [
         {
-          "expr": "sum by (type, forum) (rate(tiebascraper_scraped_items_total{status=\"error\", forum=~\"$forum\", instance=~\"$instance\"}[$__rate_interval]))",
-          "legendFormat": "{{type}} / {{forum}}",
+          "expr": "sum by (method, status) (rate(tiebascraper_api_request_duration_seconds_count{status=~\"error_.*|unexpected_error\", instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "{{method}} [{{status}}]",
           "refId": "A"
         }
       ]
@@ -834,7 +834,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (type) (tiebascraper_scraped_items_total{status=\"success\", forum=~\"$forum\", instance=~\"$instance\"})",
+          "expr": "sum by (type) (tiebascraper_scraped_items_total{forum=~\"$forum\", instance=~\"$instance\"})",
           "legendFormat": "{{type}}",
           "refId": "A"
         }
@@ -884,7 +884,7 @@
       },
       "targets": [
         {
-          "expr": "topk(10, sum by (forum) (tiebascraper_scraped_items_total{status=\"success\", forum=~\"$forum\", instance=~\"$instance\"}))",
+          "expr": "topk(10, sum by (forum) (tiebascraper_scraped_items_total{forum=~\"$forum\", instance=~\"$instance\"}))",
           "legendFormat": "{{forum}}",
           "refId": "A"
         }
@@ -1360,7 +1360,7 @@
     },
     {
       "id": 30,
-      "title": "队列大小 (按优先级)",
+      "title": "队列大小 (按通道)",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
@@ -1409,7 +1409,7 @@
       "targets": [
         {
           "expr": "tiebascraper_queue_size{instance=~\"$instance\"}",
-          "legendFormat": "priority={{priority}}",
+          "legendFormat": "{{lane}}",
           "refId": "A"
         }
       ]

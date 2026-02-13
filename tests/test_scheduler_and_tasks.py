@@ -1,11 +1,14 @@
 """调度器和任务模块测试。"""
 
+import asyncio
 from typing import Any, cast
+from unittest.mock import AsyncMock
 
 import pytest
 from conftest import DummyConfig, DummyContainer, DummyForum
 
 from src.scraper.queue import UniquePriorityQueue
+from src.scraper.router import QueueRouter
 from src.scraper.scheduler import Scheduler
 from src.scraper.tasks import (
     DeepScanTask,
@@ -68,7 +71,7 @@ def test_task_unique_key():
 @pytest.mark.asyncio
 async def test_unique_priority_queue_dedup():
     """测试去重优先队列的去重功能"""
-    q = UniquePriorityQueue()
+    q = UniquePriorityQueue(lane="test")
 
     t1 = Task(priority=Priority.HIGH, content=ScanThreadsTask(fid=1, fname="x", pn=1))
     t2 = Task(priority=Priority.HIGH, content=ScanThreadsTask(fid=1, fname="x", pn=1))  # 重复
@@ -82,7 +85,7 @@ async def test_unique_priority_queue_dedup():
 @pytest.mark.asyncio
 async def test_unique_priority_queue_priority_order():
     """测试去重优先队列的优先级排序"""
-    q = UniquePriorityQueue()
+    q = UniquePriorityQueue(lane="test")
 
     t_low = Task(priority=Priority.LOW, content=ScanThreadsTask(fid=1, fname="x", pn=1))
     t_high = Task(priority=Priority.HIGH, content=ScanThreadsTask(fid=2, fname="y", pn=1))
@@ -93,20 +96,52 @@ async def test_unique_priority_queue_priority_order():
     # 高优先级应该先出队
     first = await q.get()
     assert first.priority == Priority.HIGH
+    q.task_done(first)
 
 
 @pytest.mark.asyncio
 async def test_unique_priority_queue_allows_after_get():
     """测试出队后可以重新入队相同任务"""
-    q = UniquePriorityQueue()
+    q = UniquePriorityQueue(lane="test")
 
     t1 = Task(priority=Priority.HIGH, content=ScanThreadsTask(fid=1, fname="x", pn=1))
 
     await q.put(t1)
-    _ = await q.get()
+    got = await q.get()
+
+    # 处理中（未 task_done）期间不应允许重复入队
+    t2 = Task(priority=Priority.HIGH, content=ScanThreadsTask(fid=1, fname="x", pn=1))
+    await q.put(t2)
+    assert q.qsize() == 0
+
+    q.task_done(got)
 
     # 出队后应该可以重新入队
-    t2 = Task(priority=Priority.HIGH, content=ScanThreadsTask(fid=1, fname="x", pn=1))
+    t3 = Task(priority=Priority.HIGH, content=ScanThreadsTask(fid=1, fname="x", pn=1))
+    await q.put(t3)
+    assert q.qsize() == 1
+
+
+@pytest.mark.asyncio
+async def test_unique_priority_queue_cancelled_put_rolls_back_key():
+    """被取消的 put 不应污染去重集合"""
+    q = UniquePriorityQueue(lane="test", maxsize=1)
+
+    t1 = Task(priority=Priority.HIGH, content=ScanThreadsTask(fid=1, fname="x", pn=1))
+    t2 = Task(priority=Priority.HIGH, content=ScanThreadsTask(fid=2, fname="y", pn=1))
+
+    await q.put(t1)
+
+    blocked_put = asyncio.create_task(q.put(t2))
+    await asyncio.sleep(0)
+    blocked_put.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await blocked_put
+
+    got = await q.get()
+    q.task_done(got)
+
     await q.put(t2)
     assert q.qsize() == 1
 
@@ -117,15 +152,15 @@ async def test_unique_priority_queue_allows_after_get():
 @pytest.mark.asyncio
 async def test_scheduler_backfill_enqueue_start_page_hybrid():
     """测试 hybrid 模式下回溯任务从第 2 页开始"""
-    q = UniquePriorityQueue()
+    router = QueueRouter()
     container = DummyContainer(config=DummyConfig(mode="hybrid"), forums=[DummyForum(1, "bar")])
-    s = Scheduler(q, container)  # type: ignore[arg-type]
+    s = Scheduler(router, container)  # type: ignore[arg-type]
 
     await s._schedule_backfill_homepage(
         cast("Any", container.forums[0]), container.config.max_backfill_pages, is_good=False
     )
 
-    task = await q.get()
+    task = await router.threads_queue.get()
     assert isinstance(task.content, ScanThreadsTask)
     assert task.content.pn == 2  # hybrid 模式从第 2 页开始
     assert task.priority == Priority.BACKFILL_THREADS
@@ -134,15 +169,15 @@ async def test_scheduler_backfill_enqueue_start_page_hybrid():
 @pytest.mark.asyncio
 async def test_scheduler_backfill_enqueue_start_page_backfill():
     """测试 backfill 模式下回溯任务从第 1 页开始"""
-    q = UniquePriorityQueue()
+    router = QueueRouter()
     container = DummyContainer(config=DummyConfig(mode="backfill"), forums=[DummyForum(1, "bar")])
-    s = Scheduler(q, container)  # type: ignore[arg-type]
+    s = Scheduler(router, container)  # type: ignore[arg-type]
 
     await s._schedule_backfill_homepage(
         cast("Any", container.forums[0]), container.config.max_backfill_pages, is_good=False
     )
 
-    task = await q.get()
+    task = await router.threads_queue.get()
     assert isinstance(task.content, ScanThreadsTask)
     assert task.content.pn == 1  # backfill 模式从第 1 页开始
     assert task.content.backfill is True
@@ -151,13 +186,14 @@ async def test_scheduler_backfill_enqueue_start_page_backfill():
 @pytest.mark.asyncio
 async def test_scheduler_homepage_scans():
     """测试首页扫描任务生成"""
-    q = UniquePriorityQueue()
+    router = QueueRouter()
     forums = [DummyForum(1, "bar"), DummyForum(2, "baz")]
     container = DummyContainer(config=DummyConfig(), forums=forums)
-    s = Scheduler(q, container)  # type: ignore[arg-type]
+    s = Scheduler(router, container)  # type: ignore[arg-type]
 
     await s._schedule_homepage_scans(forums, is_good=False)  # type: ignore[arg-type]
 
+    q = router.threads_queue
     assert q.qsize() == 2
     tasks = []
     while not q.empty():
@@ -171,9 +207,9 @@ async def test_scheduler_homepage_scans():
 @pytest.mark.asyncio
 async def test_scheduler_stop_event():
     """测试调度器停止事件"""
-    q = UniquePriorityQueue()
+    router = QueueRouter()
     container = DummyContainer(config=DummyConfig(scheduler_interval_seconds=10), forums=[DummyForum(1, "bar")])
-    s = Scheduler(q, container)  # type: ignore[arg-type]
+    s = Scheduler(router, container)  # type: ignore[arg-type]
 
     assert not s.is_stopped
     s.stop()
@@ -183,14 +219,15 @@ async def test_scheduler_stop_event():
 @pytest.mark.asyncio
 async def test_scheduler_run_backfill_schedules_both_sections():
     """测试回溯模式同时调度普通和精华分区"""
-    q = UniquePriorityQueue()
+    router = QueueRouter()
     forums = [DummyForum(1, "bar")]
     container = DummyContainer(config=DummyConfig(mode="backfill"), forums=forums)
-    s = Scheduler(q, container)  # type: ignore[arg-type]
+    s = Scheduler(router, container)  # type: ignore[arg-type]
 
     await s._run_backfill()
 
     # 应该有普通和精华两个任务
+    q = router.threads_queue
     tasks = []
     while not q.empty():
         tasks.append(await q.get())
@@ -198,6 +235,65 @@ async def test_scheduler_run_backfill_schedules_both_sections():
     assert len(tasks) == 2
     is_good_values = {t.content.is_good for t in tasks}
     assert is_good_values == {True, False}
+
+
+@pytest.mark.asyncio
+async def test_scheduler_backpressure_uses_threads_lane_only():
+    """背压应只看 threads 通道深度，不受 comments 通道堆积影响"""
+    router = QueueRouter()
+    container = DummyContainer(
+        config=DummyConfig(
+            queue_depth_threshold=1,
+            skip_wait_seconds=1,
+            scheduler_interval_seconds=1,
+            good_page_every_ticks=2,
+        ),
+        forums=[DummyForum(1, "bar")],
+    )
+    s = Scheduler(router, container)  # type: ignore[arg-type]
+
+    # 仅填满 comments 通道
+    await router.comments_queue.put(Task(priority=Priority.LOW, content=FullScanCommentsTask(tid=1, pid=1)))
+
+    scheduled_once = asyncio.Event()
+
+    async def _mock_schedule(*args, **kwargs):
+        scheduled_once.set()
+        s.stop()
+
+    s._schedule_homepage_scans = AsyncMock(side_effect=_mock_schedule)  # type: ignore[method-assign]
+
+    await s._run_loop(lambda: cast("Any", container.forums), 1, "Default")
+
+    assert scheduled_once.is_set()
+
+
+@pytest.mark.asyncio
+async def test_scheduler_backpressure_blocks_when_threads_lane_full():
+    """threads 通道达到阈值时应触发背压并跳过调度"""
+    router = QueueRouter()
+    container = DummyContainer(
+        config=DummyConfig(
+            queue_depth_threshold=1,
+            skip_wait_seconds=1,
+            scheduler_interval_seconds=1,
+            good_page_every_ticks=2,
+        ),
+        forums=[DummyForum(1, "bar")],
+    )
+    s = Scheduler(router, container)  # type: ignore[arg-type]
+
+    # 填满 threads 通道
+    await router.threads_queue.put(Task(priority=Priority.HIGH, content=ScanThreadsTask(fid=1, fname="bar", pn=1)))
+
+    s._schedule_homepage_scans = AsyncMock()  # type: ignore[method-assign]
+
+    loop_task = asyncio.create_task(s._run_loop(lambda: cast("Any", container.forums), 1, "Default"))
+    await asyncio.sleep(0.05)
+    s.stop()
+    await loop_task
+
+    s._schedule_homepage_scans.assert_not_awaited()
 
 
 # ==================== 各种任务类型的 unique_key 测试 ====================

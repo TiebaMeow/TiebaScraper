@@ -6,7 +6,7 @@ from prometheus_client import Counter, Gauge, Histogram
 SCRAPED_ITEMS = Counter(
     "tiebascraper_scraped_items_total",
     "Total number of items scraped",
-    ["type", "forum", "status"],  # type: thread, post, comment; status: success, error
+    ["type", "forum"],  # type: thread, post, comment
 )
 
 # 任务处理耗时分布
@@ -20,7 +20,9 @@ TASK_DURATION = Histogram(
 API_REQUEST_DURATION = Histogram(
     "tiebascraper_api_request_duration_seconds",
     "Time spent on actual API network requests",
-    ["method", "status"],  # method: get_threads, etc.; status: 'error_deleted', 'error_<code>', or 'unexpected_error'
+    # method: get_threads, etc.
+    # status: 'success', 'error_deleted', 'error_<code>', or 'unexpected_error'
+    ["method", "status"],
     buckets=(0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0),
 )
 
@@ -35,7 +37,7 @@ RATELIMIT_WAIT_DURATION = Histogram(
 QUEUE_SIZE = Gauge(
     "tiebascraper_queue_size",
     "Current number of tasks in the queue",
-    ["priority"],
+    ["lane"],  # lane: threads, posts, comments
 )
 
 # 活跃 Worker 数量
