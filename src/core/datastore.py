@@ -348,21 +348,27 @@ class DataStore:
 
     async def save_threads_and_pending_scans(
         self,
-        thread_models: list[Thread],
-        pending_scans: list[PendingThreadScan],
+        thread_dtos: list[ThreadDTO],
+        backfill: bool = False,
         *,
         upsert_threads: bool = False,
     ) -> None:
         """原子保存 thread 元数据与 pending_scan 标记。
 
         Args:
-            thread_models: 待保存的 thread 模型列表。
-            pending_scans: 待保存的 pending thread scan 列表。
+            thread_dtos: 待保存的 thread DTO 列表。
+            backfill: 是否为回溯任务。
             upsert_threads: 是否在 thread 主键冲突时更新元数据。
                 仅在需要强制刷新 thread 元数据（如 force 全量扫描）时启用。
         """
-        if not thread_models and not pending_scans:
+        if not thread_dtos:
             return
+        thread_models = [Thread.from_dto(dto) for dto in thread_dtos]
+        pending_scans = [
+            PendingThreadScan(tid=dto.tid, fid=dto.fid, fname=dto.fname, backfill=backfill)
+            for dto in thread_dtos
+            if dto.reply_num > 0
+        ]
 
         async with self.get_session() as session:
             if thread_models:

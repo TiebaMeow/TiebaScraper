@@ -99,11 +99,11 @@ async def test_threads_handler_new_threads_schedule_and_push():
     # 应该原子保存 thread 元数据与 pending_scan
     datastore.save_threads_and_pending_scans.assert_awaited_once()
     atomic_call = datastore.save_threads_and_pending_scans.await_args
-    thread_models = atomic_call.args[0]
-    pending_scans = atomic_call.args[1]
-    assert thread_models is not None
-    assert isinstance(thread_models[0], ThreadModel)
-    assert pending_scans
+    thread_dtos = atomic_call.args[0]
+    assert thread_dtos is not None
+    assert thread_dtos[0].tid == thread.tid
+    assert atomic_call.kwargs.get("backfill") is False
+    assert atomic_call.kwargs.get("upsert_threads") is False
 
     # 应该生成 FullScanPostsTask
     queued_tasks = _drain_router(router)
@@ -137,11 +137,11 @@ async def test_threads_handler_new_thread_zero_replies():
     # 没有回复的主题帖也应通过原子方法保存元数据
     datastore.save_threads_and_pending_scans.assert_awaited_once()
     atomic_call = datastore.save_threads_and_pending_scans.await_args
-    thread_models = atomic_call.args[0]
-    pending_scans = atomic_call.args[1]
-    assert thread_models is not None
-    assert isinstance(thread_models[0], ThreadModel)
-    assert pending_scans == []
+    thread_dtos = atomic_call.args[0]
+    assert thread_dtos is not None
+    assert thread_dtos[0].tid == thread.tid
+    assert atomic_call.kwargs.get("backfill") is False
+    assert atomic_call.kwargs.get("upsert_threads") is False
 
     # 不应该生成 FullScanPostsTask
     queued_tasks = _drain_router(router)

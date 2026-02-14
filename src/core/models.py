@@ -5,15 +5,11 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime  # noqa: TC003
 
-from sqlalchemy import BigInteger, Boolean, DateTime, String
+from sqlalchemy import BigInteger, Boolean, DateTime, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 from tiebameow.models.orm import Base
-
-
-def _now_utc() -> datetime:
-    return datetime.now(tz=UTC)
 
 
 class PendingThreadScan(Base):
@@ -35,7 +31,7 @@ class PendingThreadScan(Base):
     fid: Mapped[int] = mapped_column(BigInteger, nullable=False)
     fname: Mapped[str] = mapped_column(String(255), nullable=False)
     backfill: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now_utc)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     def to_dict(self) -> dict:
         result = {}
@@ -63,7 +59,7 @@ class PendingCommentScan(Base):
     pid: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     backfill: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     task_kind: Mapped[str] = mapped_column(String(16), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now_utc)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     def to_dict(self) -> dict:
         result = {}

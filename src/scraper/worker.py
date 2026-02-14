@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from aiotieba.enums import PostSortType
 from tiebameow.client.tieba_client import UnretriableApiError
-from tiebameow.models.orm import Comment, Post, Thread, User
+from tiebameow.models.orm import Comment, Post, User
 from tiebameow.utils.logger import logger
 
 from ..core.metrics import (
@@ -33,7 +33,6 @@ from ..core.metrics import (
     TASK_DURATION,
     WORKER_ERRORS,
 )
-from ..core.models import PendingThreadScan
 from .tasks import (
     DeepScanTask,
     FullScanCommentsTask,
@@ -348,15 +347,9 @@ class ThreadsTaskHandler(TaskHandler):
         await self.ensure_users(new_threads)
 
         # 原子保存：新 thread 元数据 + pending_scan 标记
-        thread_models = [Thread.from_dto(t) for t in new_threads]
-        pending_scans = [
-            PendingThreadScan(tid=t.tid, fid=t.fid, fname=t.fname, backfill=backfill)
-            for t in new_threads
-            if t.reply_num > 0
-        ]
         await self.datastore.save_threads_and_pending_scans(
-            thread_models,
-            pending_scans,
+            new_threads,
+            backfill=backfill,
             upsert_threads=force,
         )
 
