@@ -10,13 +10,14 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, ClassVar, Literal
 
 from cashews import Cache, add_prefix
-from sqlalchemy import select
+from sqlalchemy import case, delete, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from tiebameow.models.orm import Comment, Forum, Post, Thread, User
 from tiebameow.utils.logger import logger
 
 from .metrics import CACHE_HITS, CACHE_MISSES, DB_OPERATIONS
+from .models import PendingCommentScan, PendingThreadScan
 from .publisher import EventEnvelope, NoopPublisher, RedisStreamsPublisher, WebSocketPublisher, build_envelope
 
 if TYPE_CHECKING:
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
 
     type ItemType = Literal["thread", "post", "comment"]
     type DTOType = ThreadDTO | PostDTO | CommentDTO
+    type PendingCommentTaskKind = Literal["full", "incremental"]
 
 
 PRIMARY_KEY_MAP = {
@@ -343,3 +345,128 @@ class DataStore:
             stmt = update(Thread).where(Thread.tid == tid).values(last_time=last_time, reply_num=reply_num)
             await session.execute(stmt)
             await session.commit()
+
+    async def save_threads_and_pending_scans(
+        self,
+        thread_dtos: list[ThreadDTO],
+        backfill: bool = False,
+        *,
+        upsert_threads: bool = False,
+    ) -> None:
+        """原子保存 thread 元数据与 pending_scan 标记。
+
+        Args:
+            thread_dtos: 待保存的 thread DTO 列表。
+            backfill: 是否为回溯任务。
+            upsert_threads: 是否在 thread 主键冲突时更新元数据。
+                仅在需要强制刷新 thread 元数据（如 force 全量扫描）时启用。
+        """
+        if not thread_dtos:
+            return
+        thread_models = [Thread.from_dto(dto) for dto in thread_dtos]
+        pending_scans = [
+            PendingThreadScan(tid=dto.tid, fid=dto.fid, fname=dto.fname, backfill=backfill)
+            for dto in thread_dtos
+            if dto.reply_num > 0
+        ]
+
+        async with self.get_session() as session:
+            if thread_models:
+                thread_values = [item.to_dict() for item in thread_models]
+                thread_stmt = insert(Thread).values(thread_values)
+                if upsert_threads:
+                    primary_key = PRIMARY_KEY_MAP[Thread]
+                    update_dict = {
+                        col.name: thread_stmt.excluded[col.name]
+                        for col in Thread.__table__.columns
+                        if col.name not in primary_key
+                    }
+                    thread_stmt = thread_stmt.on_conflict_do_update(
+                        index_elements=list(primary_key),
+                        set_=update_dict,
+                    )
+                else:
+                    thread_stmt = thread_stmt.on_conflict_do_nothing()
+                await session.execute(thread_stmt)
+
+            if pending_scans:
+                pending_values = [item.to_dict() for item in pending_scans]
+                pending_stmt = insert(PendingThreadScan).values(pending_values).on_conflict_do_nothing()
+                await session.execute(pending_stmt)
+
+            await session.commit()
+
+    async def remove_pending_thread_scan(self, tid: int) -> None:
+        """移除一条待扫描的主题贴记录。"""
+        async with self.get_session() as session:
+            stmt = delete(PendingThreadScan).where(PendingThreadScan.tid == tid)
+            await session.execute(stmt)
+            await session.commit()
+
+    async def get_all_pending_thread_scans(self) -> list[PendingThreadScan]:
+        """获取所有待扫描的主题贴记录（用于重启恢复）。"""
+        async with self.get_session() as session:
+            result = await session.execute(select(PendingThreadScan))
+            return list(result.scalars().all())
+
+    async def get_pending_thread_scan_tids(self, tids: set[int] | list[int]) -> set[int]:
+        """查询给定 tid 中仍处于 pending_thread_scan 的集合。"""
+        if not tids:
+            return set()
+
+        async with self.get_session() as session:
+            stmt = select(PendingThreadScan.tid).where(PendingThreadScan.tid.in_(tids))
+            result = await session.execute(stmt)
+            return {row[0] for row in result.fetchall()}
+
+    async def add_pending_comment_scan(
+        self,
+        tid: int,
+        pid: int,
+        *,
+        backfill: bool,
+        task_kind: PendingCommentTaskKind,
+    ) -> None:
+        """添加一条楼中楼待扫描记录。"""
+        async with self.get_session() as session:
+            pending = PendingCommentScan(tid=tid, pid=pid, backfill=backfill, task_kind=task_kind)
+            stmt = insert(PendingCommentScan).values(pending.to_dict())
+            # 冲突时采用 "full" 优先策略：
+            # - 已有记录是 full，则保持 full；
+            # - 新写入是 full，则将 incremental 升级为 full。
+            # 这样可避免增量任务覆盖全量语义，导致重启恢复时丢失全量扫描机会。
+            task_kind_expr = case(
+                (PendingCommentScan.task_kind == "full", "full"),
+                (stmt.excluded.task_kind == "full", "full"),
+                else_="incremental",
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=[PendingCommentScan.tid, PendingCommentScan.pid],
+                set_={
+                    "task_kind": task_kind_expr,
+                    "backfill": stmt.excluded.backfill,
+                },
+            )
+            await session.execute(stmt)
+            await session.commit()
+
+    async def remove_pending_comment_scan(
+        self,
+        tid: int,
+        pid: int,
+        *,
+        task_kind: PendingCommentTaskKind | None = None,
+    ) -> None:
+        """移除一条楼中楼待扫描记录。"""
+        async with self.get_session() as session:
+            stmt = delete(PendingCommentScan).where((PendingCommentScan.tid == tid) & (PendingCommentScan.pid == pid))
+            if task_kind is not None:
+                stmt = stmt.where(PendingCommentScan.task_kind == task_kind)
+            await session.execute(stmt)
+            await session.commit()
+
+    async def get_all_pending_comment_scans(self) -> list[PendingCommentScan]:
+        """获取所有楼中楼待扫描记录（用于重启恢复）。"""
+        async with self.get_session() as session:
+            result = await session.execute(select(PendingCommentScan))
+            return list(result.scalars().all())

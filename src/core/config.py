@@ -183,6 +183,17 @@ class DeepScanConfig(BaseModel):
     depth: int = Field(3, gt=0)
 
 
+class WorkerConfig(BaseModel):
+    """Worker 并发配置模型
+
+    按通道设置 Worker 数量，每条通道独立占用对应 API 接口的限速配额。
+    """
+
+    threads: int = Field(default=1, gt=0)
+    posts: int = Field(default=2, gt=0)
+    comments: int = Field(default=2, gt=0)
+
+
 class PydanticConfig(BaseSettings):
     """Pydantic总配置模型"""
 
@@ -204,6 +215,7 @@ class PydanticConfig(BaseSettings):
         default_factory=lambda: SchedulerConfig(interval_seconds=60, good_page_every_n_ticks=10)
     )
     deep_scan: DeepScanConfig = Field(default_factory=lambda: DeepScanConfig(enabled=False, depth=3))
+    worker: WorkerConfig = Field(default_factory=WorkerConfig)
     websocket: WebSocketConfig = Field(default_factory=lambda: WebSocketConfig(host="localhost", port=8000))
     consumer: ConsumerConfig = Field(
         default_factory=lambda: ConsumerConfig(transport="none", max_len=10000, stream_prefix="scraper:tieba:events")
@@ -455,6 +467,21 @@ class Config:
     def deep_scan_depth(self) -> int:
         """获取 DeepScan 深度扫描的页数深度。"""
         return self.pydantic_config.deep_scan.depth
+
+    @property
+    def worker_threads(self) -> int:
+        """获取 threads 通道的 Worker 数量。"""
+        return self.pydantic_config.worker.threads
+
+    @property
+    def worker_posts(self) -> int:
+        """获取 posts 通道的 Worker 数量。"""
+        return self.pydantic_config.worker.posts
+
+    @property
+    def worker_comments(self) -> int:
+        """获取 comments 通道的 Worker 数量。"""
+        return self.pydantic_config.worker.comments
 
     @property
     def websocket_url(self) -> WebsocketUrl:

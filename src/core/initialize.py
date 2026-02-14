@@ -6,20 +6,23 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from sqlalchemy import select, text
 from tiebameow.models.orm import Base, Forum
 from tiebameow.utils.logger import logger
 
-from ..scraper.queue import UniquePriorityQueue
 from .config import Config
 from .container import Container
+from .models import PendingCommentScan, PendingThreadScan  # noqa: F401  确保 pending 表被 create_all 发现
+
+if TYPE_CHECKING:
+    from ..scraper.router import QueueRouter
 
 
 async def initialize_application(
     mode: Literal["periodic", "backfill", "hybrid"],
-) -> tuple[Container, UniquePriorityQueue]:
+) -> tuple[Container, QueueRouter]:
     """初始化整个应用程序。
 
     该函数封装了应用启动所需的所有核心初始化步骤：
@@ -27,15 +30,17 @@ async def initialize_application(
     2. 创建并设置依赖注入容器。
     3. 创建数据库表并注册分区。
     4. 初始化数据库中的贴吧列表。
-    5. 创建主任务队列。
+    5. 创建多通道队列路由器。
 
     Args:
         mode: 应用程序的运行模式 ("periodic"、"backfill" 或 "hybrid")。
 
     Returns:
-        一个元组，包含初始化完成的容器实例和任务队列。
+        一个元组，包含初始化完成的容器实例和多通道队列路由器。
     """
     logger.info("Initializing application in '{}' mode...", mode)
+
+    from ..scraper.router import QueueRouter  # 延迟导入避免循环依赖
 
     app_config = Config(mode=mode)
 
@@ -46,10 +51,10 @@ async def initialize_application(
 
     await initialize_forums(container)
 
-    task_queue = UniquePriorityQueue(maxsize=0)
+    router = QueueRouter(maxsize=0)
 
     logger.info("Application initialized successfully.")
-    return container, task_queue
+    return container, router
 
 
 async def create_tables(container: Container) -> None:

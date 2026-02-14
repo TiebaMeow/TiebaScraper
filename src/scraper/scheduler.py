@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from tiebameow.models.orm import Forum
 
     from ..core import Container
-    from .queue import UniquePriorityQueue
+    from .router import QueueRouter
 
 
 class Scheduler:
@@ -34,13 +34,13 @@ class Scheduler:
     支持周期性模式和历史回溯模式的任务调度。
 
     Attributes:
-        queue: 任务优先队列。
+        router: 多通道队列路由器。
         container: 依赖注入容器。
         log: 日志记录器。
     """
 
-    def __init__(self, queue: UniquePriorityQueue, container: Container):
-        self.queue = queue
+    def __init__(self, router: QueueRouter, container: Container):
+        self.router = router
         self.container = container
         self.log = logger.bind(name="Scheduler")
         self._stop_event = asyncio.Event()
@@ -225,10 +225,10 @@ class Scheduler:
 
             # 队列感知调度：检查队列深度
             if queue_threshold > 0:
-                current_depth = self.queue.qsize()
+                current_depth = self.router.get_queue("threads").qsize()
                 if current_depth >= queue_threshold:
                     logger.warning(
-                        "[{}] Queue depth {} >= threshold {}. Skipping tick #{} and waiting {}s.",
+                        "[{}] Threads queue depth {} >= threshold {}. Skipping tick #{} and waiting {}s.",
                         task_name,
                         current_depth,
                         queue_threshold,
@@ -292,7 +292,7 @@ class Scheduler:
         for forum in forums:
             task_content = ScanThreadsTask(fid=forum.fid, fname=forum.fname, pn=1, is_good=is_good)
             task = Task(priority=Priority.REALTIME, content=task_content)
-            await self.queue.put(task)
+            await self.router.put(task)
             section = "GOOD" if is_good else "NORMAL"
             logger.debug("Scheduled {} homepage scan for [{}吧] with priority=REALTIME", section, forum.fname)
 
@@ -317,7 +317,7 @@ class Scheduler:
             force=self.container.config.backfill_force_scan,
         )
         task = Task(priority=Priority.BACKFILL_THREADS, content=task_content)
-        await self.queue.put(task)
+        await self.router.put(task)
         section = "GOOD" if is_good else "NORMAL"
         logger.debug(
             "Scheduled BACKFILL [{}] start pn={} for [{}吧] with priority=BACKFILL_THREADS (max_pages={}).",

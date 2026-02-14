@@ -21,6 +21,7 @@ from tiebameow.client import Client
 from tiebameow.models.orm import Forum
 from tiebameow.utils.logger import logger
 
+from .lock import LockManager, MemoryLockManager, RedisLockManager
 from .ws_server import WebSocketServer
 
 if TYPE_CHECKING:
@@ -73,6 +74,7 @@ class Container:
         self.tb_clients: list[Client] = []
         self.forums: list[Forum] | None = None
         self.ws_server: WebSocketServer | None = None
+        self.lock_manager: LockManager = MemoryLockManager()
         self._config_lock = asyncio.Lock()
 
     def get_next_client_index(self) -> int:
@@ -316,6 +318,7 @@ class Container:
                 try:
                     self.redis_client = await redis.from_url(self.config.redis_url, decode_responses=True)
                     await self.redis_client.ping()  # type: ignore
+                    self.lock_manager = RedisLockManager(self.redis_client)
                     logger.info("Redis client connected successfully.")
                 except Exception as e:
                     if self.config.consumer_transport == "redis":

@@ -46,6 +46,8 @@ class DummyConfig:
     backfill_force_scan: bool = False
     deep_scan_enabled: bool = False
     deep_scan_depth: int = 3
+    queue_depth_threshold: int = 0
+    skip_wait_seconds: int = 1
     default_forums: list[str] = field(default_factory=lambda: ["bar", "baz"])
     groups: list = field(default_factory=list)
 
