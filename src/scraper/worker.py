@@ -430,7 +430,7 @@ class FullScanPostsTaskHandler(TaskHandler):
 
         主要流程：
         从第一页逐页扫描并处理主题贴的回复内容，直至has_more为False。
-        任务完成后，更新主题贴的元数据到数据库。
+        任务完成后，移除主题贴的 pending_scan 标记。
 
         Args:
             task_content: ScanPostsTask实例，包含主题贴tid和每页条目数量。
@@ -482,7 +482,7 @@ class FullScanPostsTaskHandler(TaskHandler):
         except UnretriableApiError as e:
             if e.code == 4:
                 self.log.warning(
-                    "Thread tid={} may have been deleted (err_code=4). Saving thread metadata from pending scan.", tid
+                    "Thread tid={} may have been deleted (err_code=4). Clearing pending_scan marker and skipping.", tid
                 )
                 await self._finalize_thread(tid)
             else:
