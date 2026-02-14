@@ -350,15 +350,37 @@ class DataStore:
         self,
         thread_models: list[Thread],
         pending_scans: list[PendingThreadScan],
+        *,
+        upsert_threads: bool = False,
     ) -> None:
-        """原子保存 thread 元数据与 pending_scan 标记。"""
+        """原子保存 thread 元数据与 pending_scan 标记。
+
+        Args:
+            thread_models: 待保存的 thread 模型列表。
+            pending_scans: 待保存的 pending thread scan 列表。
+            upsert_threads: 是否在 thread 主键冲突时更新元数据。
+                仅在需要强制刷新 thread 元数据（如 force 全量扫描）时启用。
+        """
         if not thread_models and not pending_scans:
             return
 
         async with self.get_session() as session:
             if thread_models:
                 thread_values = [item.to_dict() for item in thread_models]
-                thread_stmt = insert(Thread).values(thread_values).on_conflict_do_nothing()
+                thread_stmt = insert(Thread).values(thread_values)
+                if upsert_threads:
+                    primary_key = PRIMARY_KEY_MAP[Thread]
+                    update_dict = {
+                        col.name: thread_stmt.excluded[col.name]
+                        for col in Thread.__table__.columns
+                        if col.name not in primary_key
+                    }
+                    thread_stmt = thread_stmt.on_conflict_do_update(
+                        index_elements=list(primary_key),
+                        set_=update_dict,
+                    )
+                else:
+                    thread_stmt = thread_stmt.on_conflict_do_nothing()
                 await session.execute(thread_stmt)
 
             if pending_scans:

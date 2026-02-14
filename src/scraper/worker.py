@@ -298,7 +298,7 @@ class ThreadsTaskHandler(TaskHandler):
                 old_tids = set(all_tids) - new_tids
                 self.log.debug("{}吧, pn={}: Found {} threads, {} are new.", fname, pn, len(all_tids), len(new_tids))
 
-            await self._process_new_threads(threads_data, new_tids, backfill)
+            await self._process_new_threads(threads_data, new_tids, backfill, task_content.force)
 
             await self._process_old_threads(threads_data, old_tids, backfill)
 
@@ -319,7 +319,13 @@ class ThreadsTaskHandler(TaskHandler):
         except Exception as e:
             self.log.exception("Failed to process ScanThreadsTask for {}吧, pn={}: {}", fname, pn, e)
 
-    async def _process_new_threads(self, threads_data: ThreadsDTO, new_tids: set[int], backfill: bool):
+    async def _process_new_threads(
+        self,
+        threads_data: ThreadsDTO,
+        new_tids: set[int],
+        backfill: bool,
+        force: bool,
+    ):
         """处理新发现的主题贴。
 
         主要流程：
@@ -332,6 +338,7 @@ class ThreadsTaskHandler(TaskHandler):
             threads_data: aiotieba返回的Threads对象。
             new_tids: 新主题贴的tid集合。
             backfill: 是否为回溯任务。
+            force: 是否为强制扫描。
         """
         if not new_tids:
             return
@@ -347,7 +354,11 @@ class ThreadsTaskHandler(TaskHandler):
             for t in new_threads
             if t.reply_num > 0
         ]
-        await self.datastore.save_threads_and_pending_scans(thread_models, pending_scans)
+        await self.datastore.save_threads_and_pending_scans(
+            thread_models,
+            pending_scans,
+            upsert_threads=force,
+        )
 
         priority = Priority.BACKFILL_POSTS if backfill else Priority.MEDIUM
 

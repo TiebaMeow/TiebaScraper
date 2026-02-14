@@ -251,6 +251,38 @@ async def test_threads_handler_filters_livepost():
     assert 2 not in call_args[0][1]  # 直播帖 tid=2 应该被过滤
 
 
+@pytest.mark.asyncio
+async def test_threads_handler_force_mode_enables_thread_upsert():
+    """测试 ThreadsTaskHandler 在 force 模式下会启用 thread 元数据 upsert。"""
+    thread = make_thread(tid=1, reply_num=5)
+    threads_response = make_threads_response([thread])
+
+    tb_client = SimpleNamespace(get_threads_dto=AsyncMock(return_value=threads_response))
+    datastore = SimpleNamespace(
+        filter_new_ids=AsyncMock(return_value=set()),
+        save_items=AsyncMock(),
+        save_threads_and_pending_scans=AsyncMock(),
+        get_threads_by_tids=AsyncMock(return_value=[]),
+        push_object_event=AsyncMock(),
+    )
+    router = QueueRouter()
+    handler = ThreadsTaskHandler(
+        worker_id=0,
+        container=create_mock_container(tb_client=tb_client),
+        datastore=cast("Any", datastore),
+        router=router,
+    )
+
+    await handler.handle(ScanThreadsTask(fid=thread.fid, fname=thread.fname, pn=1, force=True))
+
+    datastore.save_threads_and_pending_scans.assert_awaited_once()
+    atomic_call = datastore.save_threads_and_pending_scans.await_args
+    assert atomic_call.kwargs.get("upsert_threads") is True
+
+    # force 模式不应走 thread 的 filter_new_ids 分流（但 ensure_users 仍会查询 user）
+    assert not any(call.args and call.args[0] == "thread" for call in datastore.filter_new_ids.await_args_list)
+
+
 # ==================== FullScanPostsTaskHandler 测试 ====================
 
 
