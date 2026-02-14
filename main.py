@@ -91,20 +91,18 @@ async def _run_periodic_mode(scheduler: Scheduler, workers: list[Worker], router
                 except asyncio.CancelledError:
                     pass
 
-        total_remaining = router.total_qsize()
-        if total_remaining > 0:
-            logger.info(
-                "Waiting for {} tasks across all lanes to complete (timeout={}s)...",
-                total_remaining,
-                GRACEFUL_SHUTDOWN_TIMEOUT,
-            )
-            try:
-                join_tasks = [q.join() for q in router.lanes.values()]
-                await asyncio.wait_for(asyncio.gather(*join_tasks), timeout=GRACEFUL_SHUTDOWN_TIMEOUT)
-                logger.info("All queued tasks completed.")
-            except TimeoutError:
-                remaining = router.total_qsize()
-                logger.warning("Graceful shutdown timeout. {} tasks remaining across all lanes.", remaining)
+        logger.info(
+            "Waiting for all lane tasks to complete (timeout={}s, queued_now={})...",
+            GRACEFUL_SHUTDOWN_TIMEOUT,
+            router.total_qsize(),
+        )
+        try:
+            join_tasks = [q.join() for q in router.lanes.values()]
+            await asyncio.wait_for(asyncio.gather(*join_tasks), timeout=GRACEFUL_SHUTDOWN_TIMEOUT)
+            logger.info("All lane tasks completed.")
+        except TimeoutError:
+            remaining = router.total_qsize()
+            logger.warning("Graceful shutdown timeout. queued_now={} across all lanes.", remaining)
 
         worker_tasks = [t for t in tasks if t.get_name().startswith("worker-")]
         for t in worker_tasks:
@@ -166,20 +164,18 @@ async def _run_hybrid_mode(scheduler: Scheduler, workers: list[Worker], router: 
                 except asyncio.CancelledError:
                     pass
 
-        total_remaining = router.total_qsize()
-        if total_remaining > 0:
-            logger.info(
-                "Waiting for {} tasks across all lanes to complete (timeout={}s)...",
-                total_remaining,
-                GRACEFUL_SHUTDOWN_TIMEOUT,
-            )
-            try:
-                join_tasks = [q.join() for q in router.lanes.values()]
-                await asyncio.wait_for(asyncio.gather(*join_tasks), timeout=GRACEFUL_SHUTDOWN_TIMEOUT)
-                logger.info("All queued tasks completed.")
-            except TimeoutError:
-                remaining = router.total_qsize()
-                logger.warning("Graceful shutdown timeout. {} tasks remaining across all lanes.", remaining)
+        logger.info(
+            "Waiting for all lane tasks to complete (timeout={}s, queued_now={})...",
+            GRACEFUL_SHUTDOWN_TIMEOUT,
+            router.total_qsize(),
+        )
+        try:
+            join_tasks = [q.join() for q in router.lanes.values()]
+            await asyncio.wait_for(asyncio.gather(*join_tasks), timeout=GRACEFUL_SHUTDOWN_TIMEOUT)
+            logger.info("All lane tasks completed.")
+        except TimeoutError:
+            remaining = router.total_qsize()
+            logger.warning("Graceful shutdown timeout. queued_now={} across all lanes.", remaining)
 
         worker_tasks = [t for t in tasks if t.get_name().startswith("worker-")]
         for t in worker_tasks:
