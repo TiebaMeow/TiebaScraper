@@ -390,10 +390,18 @@ class ThreadsTaskHandler(TaskHandler):
         old_threads = [t for t in threads_data.objs if t.tid in old_tids]
         stored_threads = await self.datastore.get_threads_by_tids(old_tids)
         stored_threads_map = {t.tid: t for t in stored_threads}
+        pending_full_scan_tids = await self.datastore.get_pending_thread_scan_tids(old_tids)
 
         priority = Priority.BACKFILL_POSTS if backfill else Priority.HIGH
 
         for thread_data in old_threads:
+            if thread_data.tid in pending_full_scan_tids:
+                self.log.debug(
+                    "Thread tid={} still has pending full scan. Skipping incremental scheduling.",
+                    thread_data.tid,
+                )
+                continue
+
             stored_thread = stored_threads_map.get(thread_data.tid)
             if stored_thread and thread_data.last_time > stored_thread.last_time:
                 self.log.debug(

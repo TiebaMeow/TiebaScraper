@@ -167,6 +167,7 @@ async def test_threads_handler_old_thread_with_updates():
         save_items=AsyncMock(),
         save_threads_and_pending_scans=AsyncMock(),
         get_threads_by_tids=AsyncMock(return_value=[stored_thread]),
+        get_pending_thread_scan_tids=AsyncMock(return_value=set()),
         push_object_event=AsyncMock(),
     )
     router = QueueRouter()
@@ -185,6 +186,40 @@ async def test_threads_handler_old_thread_with_updates():
     assert len(incremental_tasks) == 1
     assert isinstance(incremental_tasks[0].content, IncrementalScanPostsTask)
     assert incremental_tasks[0].content.tid == thread.tid
+
+
+@pytest.mark.asyncio
+async def test_threads_handler_old_thread_with_updates_skips_incremental_when_full_scan_pending():
+    """测试旧主题帖在存在 pending full scan 标记时不会调度增量任务。"""
+    old_last_time = datetime.fromtimestamp(1)
+    new_last_time = datetime.fromtimestamp(100)
+
+    thread = make_thread(tid=1, reply_num=10, last_time=new_last_time)
+    threads_response = make_threads_response([thread])
+    stored_thread = ThreadModel(tid=1, fid=10, reply_num=5, last_time=old_last_time)
+
+    tb_client = SimpleNamespace(get_threads_dto=AsyncMock(return_value=threads_response))
+    datastore = SimpleNamespace(
+        filter_new_ids=AsyncMock(return_value=set()),
+        save_items=AsyncMock(),
+        save_threads_and_pending_scans=AsyncMock(),
+        get_threads_by_tids=AsyncMock(return_value=[stored_thread]),
+        get_pending_thread_scan_tids=AsyncMock(return_value={thread.tid}),
+        push_object_event=AsyncMock(),
+    )
+    router = QueueRouter()
+    handler = ThreadsTaskHandler(
+        worker_id=0,
+        container=create_mock_container(tb_client=tb_client),
+        datastore=cast("Any", datastore),
+        router=router,
+    )
+
+    await handler.handle(ScanThreadsTask(fid=thread.fid, fname=thread.fname, pn=1))
+
+    queued_tasks = _drain_router(router)
+    incremental_tasks = [t for t in queued_tasks if isinstance(t.content, IncrementalScanPostsTask)]
+    assert len(incremental_tasks) == 0
 
 
 @pytest.mark.asyncio

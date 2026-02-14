@@ -376,6 +376,23 @@ async def test_push_object_event_noop_when_transport_none():
     assert stream_key not in redis.streams
 
 
+@pytest.mark.asyncio
+async def test_get_pending_thread_scan_tids_returns_existing_subset():
+    """测试 get_pending_thread_scan_tids 返回待扫描 tid 子集。"""
+    DataStore._cache = None
+
+    # DummySession.fetchall 会返回 existing_ids 中的值
+    dummy_session = DummySession(existing_ids={1, 3})
+    dummy_redis = DummyRedis()
+    container = DummyContainer(dummy_session, dummy_redis)
+
+    ds = DataStore(cast("Any", container))
+    ds.cache = cast("Any", DummyCache())
+
+    pending = await ds.get_pending_thread_scan_tids({1, 2, 3, 4})
+    assert pending == {1, 3}
+
+
 # ==================== 边界情况测试 ====================
 
 
@@ -415,7 +432,7 @@ async def test_mark_as_processed_empty_set():
 
 @pytest.mark.asyncio
 async def test_add_pending_comment_scan_uses_conflict_update_for_task_kind_upgrade():
-    """测试 pending_comment_scan 在主键冲突时会更新 task_kind。"""
+    """测试 pending_comment_scan 在主键冲突时会更新 task_kind 与 backfill。"""
     DataStore._cache = None
 
     dummy_session = DummySession(existing_ids=set())
@@ -437,6 +454,7 @@ async def test_add_pending_comment_scan_uses_conflict_update_for_task_kind_upgra
     assert "ON CONFLICT" in compiled
     assert "DO UPDATE" in compiled
     assert "task_kind" in compiled
+    assert "backfill" in compiled
 
 
 @pytest.mark.asyncio

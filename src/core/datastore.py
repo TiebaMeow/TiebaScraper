@@ -409,6 +409,16 @@ class DataStore:
             result = await session.execute(select(PendingThreadScan))
             return list(result.scalars().all())
 
+    async def get_pending_thread_scan_tids(self, tids: set[int] | list[int]) -> set[int]:
+        """查询给定 tid 中仍处于 pending_thread_scan 的集合。"""
+        if not tids:
+            return set()
+
+        async with self.get_session() as session:
+            stmt = select(PendingThreadScan.tid).where(PendingThreadScan.tid.in_(tids))
+            result = await session.execute(stmt)
+            return {row[0] for row in result.fetchall()}
+
     async def add_pending_comment_scan(
         self,
         tid: int,
@@ -432,7 +442,10 @@ class DataStore:
             )
             stmt = stmt.on_conflict_do_update(
                 index_elements=[PendingCommentScan.tid, PendingCommentScan.pid],
-                set_={"task_kind": task_kind_expr},
+                set_={
+                    "task_kind": task_kind_expr,
+                    "backfill": stmt.excluded.backfill,
+                },
             )
             await session.execute(stmt)
             await session.commit()
