@@ -938,6 +938,8 @@ class FullScanCommentsTaskHandler(TaskHandler):
             initial_page_data = await self.get_comments(tid, pid, pn=1)
 
             if not initial_page_data or not initial_page_data.objs:
+                await self._finalize_comment_scan(tid, pid)
+
                 self.log.debug("Post pid={} in tid={} has no comments or has been deleted. Task finished.", pid, tid)
                 return
 
