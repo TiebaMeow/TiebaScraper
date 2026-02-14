@@ -590,6 +590,8 @@ async def test_deep_scan_schedules_incremental_comment_task_with_pending_marker(
     datastore.add_pending_comment_scan.assert_awaited_once_with(
         tid=post.tid,
         pid=post.pid,
+        fid=post.fid,
+        fname=post.fname,
         backfill=False,
         task_kind="incremental",
     )

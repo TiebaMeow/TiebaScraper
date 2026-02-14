@@ -541,6 +541,8 @@ class FullScanPostsTaskHandler(TaskHandler):
                 await self.datastore.add_pending_comment_scan(
                     tid=tid,
                     pid=post.pid,
+                    fid=post.fid,
+                    fname=post.fname,
                     backfill=backfill,
                     task_kind="full",
                 )
@@ -820,6 +822,8 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
                 await self.datastore.add_pending_comment_scan(
                     tid=post.tid,
                     pid=post.pid,
+                    fid=post.fid,
+                    fname=post.fname,
                     backfill=backfill,
                     task_kind="full",
                 )
@@ -872,6 +876,8 @@ class IncrementalScanPostsTaskHandler(TaskHandler):
                 await self.datastore.add_pending_comment_scan(
                     tid=post_data.tid,
                     pid=post_data.pid,
+                    fid=post_data.fid,
+                    fname=post_data.fname,
                     backfill=backfill,
                     task_kind="incremental",
                 )
@@ -1337,6 +1343,8 @@ class DeepScanTaskHandler(TaskHandler):
                     await self.datastore.add_pending_comment_scan(
                         tid=post.tid,
                         pid=post.pid,
+                        fid=post.fid,
+                        fname=post.fname,
                         backfill=False,
                         task_kind="incremental",
                     )

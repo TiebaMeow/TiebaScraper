@@ -442,7 +442,7 @@ async def test_add_pending_comment_scan_uses_conflict_update_for_task_kind_upgra
     ds = DataStore(cast("Any", container))
     ds.cache = cast("Any", DummyCache())
 
-    await ds.add_pending_comment_scan(tid=1, pid=2, backfill=False, task_kind="full")
+    await ds.add_pending_comment_scan(tid=1, pid=2, fid=9, fname="foo", backfill=False, task_kind="full")
 
     assert dummy_session.last_statement is not None
     compiled = str(
@@ -455,6 +455,8 @@ async def test_add_pending_comment_scan_uses_conflict_update_for_task_kind_upgra
     assert "DO UPDATE" in compiled
     assert "task_kind" in compiled
     assert "backfill" in compiled
+    assert "fid" in compiled
+    assert "fname" in compiled
 
 
 @pytest.mark.asyncio

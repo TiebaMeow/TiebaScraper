@@ -30,19 +30,41 @@ init_logger(
 GRACEFUL_SHUTDOWN_TIMEOUT = 60
 
 
-async def _recover_pending_tasks(datastore: DataStore, router: QueueRouter) -> None:
-    """启动时恢复未完成任务并重新入队。"""
+async def _recover_pending_tasks(
+    datastore: DataStore,
+    router: QueueRouter,
+    responsible_fids: set[int],
+) -> None:
+    """启动时恢复未完成任务并重新入队。
+
+    仅恢复目标贴吧由当前实例负责的任务。
+    """
     pending_threads = await datastore.get_all_pending_thread_scans()
     pending_comments = await datastore.get_all_pending_comment_scans()
 
-    for pending in pending_threads:
+    filtered_threads = pending_threads
+    filtered_comments = pending_comments
+
+    skipped_threads = 0
+    skipped_comments = 0
+
+    filtered_threads = [pending for pending in pending_threads if pending.fid in responsible_fids]
+    skipped_threads = len(pending_threads) - len(filtered_threads)
+
+    if pending_comments:
+        filtered_comments = [pending for pending in pending_comments if pending.fid in responsible_fids]
+        skipped_comments = len(pending_comments) - len(filtered_comments)
+    else:
+        filtered_comments = []
+
+    for pending in filtered_threads:
         task = Task(
             priority=Priority.BACKFILL_POSTS if pending.backfill else Priority.MEDIUM,
             content=FullScanPostsTask(tid=pending.tid, backfill=pending.backfill),
         )
         await router.put(task)
 
-    for pending in pending_comments:
+    for pending in filtered_comments:
         if pending.task_kind == "incremental":
             content = IncrementalScanCommentsTask(tid=pending.tid, pid=pending.pid, backfill=pending.backfill)
             priority = Priority.BACKFILL_POSTS if pending.backfill else Priority.MEDIUM
@@ -52,11 +74,18 @@ async def _recover_pending_tasks(datastore: DataStore, router: QueueRouter) -> N
 
         await router.put(Task(priority=priority, content=content))
 
-    if pending_threads or pending_comments:
+    if filtered_threads or filtered_comments:
         logger.info(
             "Recovered pending tasks on startup: threads={}, comments={}",
-            len(pending_threads),
-            len(pending_comments),
+            len(filtered_threads),
+            len(filtered_comments),
+        )
+
+    if skipped_threads or skipped_comments:
+        logger.info(
+            "Skipped pending tasks not owned by this instance: threads={}, comments={}",
+            skipped_threads,
+            skipped_comments,
         )
 
 
@@ -236,7 +265,8 @@ async def main(mode: Literal["periodic", "backfill", "hybrid"] = "periodic"):
             lane_counts["comments"],
         )
 
-        await _recover_pending_tasks(datastore, router)
+        responsible_fids = {forum.fid for forum in (container.forums or [])}
+        await _recover_pending_tasks(datastore, router, responsible_fids=responsible_fids)
 
         if mode == "periodic":
             await _run_periodic_mode(scheduler, workers, router)

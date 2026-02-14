@@ -19,8 +19,8 @@ class PendingThreadScan(Base):
 
     Attributes:
         tid: 主题贴 tid（主键）
-        fid: 贴吧 fid（恢复任务时可用于日志）
-        fname: 贴吧名（恢复任务时可用于日志）
+        fid: 贴吧 fid（恢复任务时用于按实例过滤）
+        fname: 贴吧名（恢复任务时用于日志）
         backfill: 是否为回溯任务
         created_at: 记录创建时间
     """
@@ -50,6 +50,8 @@ class PendingCommentScan(Base):
     Attributes:
         tid: 主题贴 tid
         pid: 回复 pid
+        fid: 贴吧 fid（恢复任务时用于按实例过滤）
+        fname: 贴吧名（恢复任务时用于日志）
         backfill: 是否为回溯任务
         task_kind: 任务类型（"full" 或 "incremental"）
         created_at: 记录创建时间
@@ -59,6 +61,8 @@ class PendingCommentScan(Base):
 
     tid: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     pid: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    fid: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    fname: Mapped[str] = mapped_column(String(255), nullable=False)
     backfill: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     task_kind: Mapped[str] = mapped_column(String(16), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

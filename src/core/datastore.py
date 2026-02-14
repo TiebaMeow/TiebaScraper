@@ -424,12 +424,21 @@ class DataStore:
         tid: int,
         pid: int,
         *,
+        fid: int | None = None,
+        fname: str | None = None,
         backfill: bool,
         task_kind: PendingCommentTaskKind,
     ) -> None:
         """添加一条楼中楼待扫描记录。"""
         async with self.get_session() as session:
-            pending = PendingCommentScan(tid=tid, pid=pid, backfill=backfill, task_kind=task_kind)
+            pending = PendingCommentScan(
+                tid=tid,
+                pid=pid,
+                fid=fid,
+                fname=fname,
+                backfill=backfill,
+                task_kind=task_kind,
+            )
             stmt = insert(PendingCommentScan).values(pending.to_dict())
             # 冲突时采用 "full" 优先策略：
             # - 已有记录是 full，则保持 full；
@@ -445,6 +454,8 @@ class DataStore:
                 set_={
                     "task_kind": task_kind_expr,
                     "backfill": stmt.excluded.backfill,
+                    "fid": stmt.excluded.fid,
+                    "fname": stmt.excluded.fname,
                 },
             )
             await session.execute(stmt)
