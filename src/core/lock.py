@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Protocol
+from typing import Any, Protocol
 
 
 class LockManager(Protocol):
@@ -35,16 +35,35 @@ class LockManager(Protocol):
 
 
 class RedisLockManager:
-    """基于 Redis ``SET NX`` 的分布式锁管理器。"""
+    """基于 Redis ``SET NX`` 的分布式锁管理器。
+
+    直接封装 redis-py 的 Lock 对象，实现标准的分布式锁语义（带有所有权校验）。
+    """
 
     def __init__(self, redis_client) -> None:
+        from redis.exceptions import LockError
+
         self._redis = redis_client
+        self._LockError = LockError
+        self._locks: dict[str, Any] = {}
 
     async def acquire(self, key: str, ttl: int = 300) -> bool:
-        return await self._redis.set(key, "1", ex=ttl, nx=True)
+        lock = self._redis.lock(key, timeout=ttl)
+        acquired = await lock.acquire(blocking=False)
+
+        if acquired:
+            self._locks[key] = lock
+            return True
+        return False
 
     async def release(self, key: str) -> None:
-        await self._redis.delete(key)
+        lock = self._locks.pop(key, None)
+        if lock:
+            try:
+                await lock.release()
+            except self._LockError:
+                # 锁可能已过期或被意外删除，这里忽略错误以保持幂等性
+                pass
 
 
 class MemoryLockManager:
