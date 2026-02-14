@@ -29,6 +29,7 @@ from src.scraper.tasks import (
     Task,
 )
 from src.scraper.worker import (
+    DeepScanTaskHandler,
     FullScanCommentsTaskHandler,
     FullScanPostsTaskHandler,
     IncrementalScanCommentsTaskHandler,
@@ -523,6 +524,43 @@ async def test_incremental_scan_comments_handler():
 
     # 应该只推送新楼中楼
     datastore.push_object_event.assert_awaited_with("comment", new_comment)
+
+
+@pytest.mark.asyncio
+async def test_deep_scan_schedules_incremental_comment_task_with_pending_marker():
+    """测试 DeepScan 在生成 IncrementalScanCommentsTask 前会写入 pending_comment_scan。"""
+    post = make_post(pid=100, tid=1, floor=2, reply_num=12, comments=[])
+    stored_post = SimpleNamespace(pid=100, reply_num=1)
+
+    datastore = SimpleNamespace(
+        get_posts_by_pids=AsyncMock(return_value=[stored_post]),
+        add_pending_comment_scan=AsyncMock(),
+        save_items=AsyncMock(),
+    )
+    router = QueueRouter()
+    handler = DeepScanTaskHandler(
+        worker_id=0,
+        container=create_mock_container(tb_client=SimpleNamespace()),
+        datastore=cast("Any", datastore),
+        router=router,
+    )
+
+    updates_found = await handler._check_posts_for_comment_updates([post])
+
+    assert updates_found == 0
+    datastore.add_pending_comment_scan.assert_awaited_once_with(
+        tid=post.tid,
+        pid=post.pid,
+        backfill=False,
+        task_kind="incremental",
+    )
+
+    queued_tasks = _drain_router(router)
+    incremental_tasks = [t for t in queued_tasks if isinstance(t.content, IncrementalScanCommentsTask)]
+    assert len(incremental_tasks) == 1
+    assert isinstance(incremental_tasks[0].content, IncrementalScanCommentsTask)
+    assert incremental_tasks[0].content.tid == post.tid
+    assert incremental_tasks[0].content.pid == post.pid
 
 
 # ==================== Worker 测试 ====================

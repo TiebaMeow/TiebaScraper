@@ -1333,6 +1333,12 @@ class DeepScanTaskHandler(TaskHandler):
                 )
 
                 if post.reply_num > 10 or len(post.comments) != post.reply_num:
+                    await self.datastore.add_pending_comment_scan(
+                        tid=post.tid,
+                        pid=post.pid,
+                        backfill=False,
+                        task_kind="incremental",
+                    )
                     update_task = IncrementalScanCommentsTask(
                         tid=post.tid,
                         pid=post.pid,
