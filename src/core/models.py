@@ -36,7 +36,9 @@ class PendingThreadScan(Base):
     def to_dict(self) -> dict:
         result = {}
         for c in self.__table__.columns:
-            result[c.name] = getattr(self, c.name)
+            value = getattr(self, c.name)
+            if value is not None:
+                result[c.name] = value
         return result
 
 
@@ -64,5 +66,7 @@ class PendingCommentScan(Base):
     def to_dict(self) -> dict:
         result = {}
         for c in self.__table__.columns:
-            result[c.name] = getattr(self, c.name)
+            value = getattr(self, c.name)
+            if value is not None:
+                result[c.name] = value
         return result
