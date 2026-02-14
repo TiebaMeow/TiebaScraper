@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any, cast
 
 import pytest
+from sqlalchemy.dialects import postgresql
 from tiebameow.models.dto import BaseThreadDTO, ThreadDTO, ThreadUserDTO
 
 from src.core.config import ConsumerConfig
@@ -73,8 +74,11 @@ class DummySession:
         self.existing_ids = existing_ids or set()
         self._tx_committed = False
         self._items_added: list[Any] = []
+        self.last_statement: object | None = None
 
     async def execute(self, statement: object):
+        self.last_statement = statement
+
         class Result:
             def __init__(self, ids: set[int]) -> None:
                 self._ids = ids
@@ -407,3 +411,54 @@ async def test_mark_as_processed_empty_set():
     # 空集合不应该写入缓存
     await ds._mark_as_processed("thread", set())
     assert len(cache._kv) == 0
+
+
+@pytest.mark.asyncio
+async def test_add_pending_comment_scan_uses_conflict_update_for_task_kind_upgrade():
+    """测试 pending_comment_scan 在主键冲突时会更新 task_kind。"""
+    DataStore._cache = None
+
+    dummy_session = DummySession(existing_ids=set())
+    dummy_redis = DummyRedis()
+    container = DummyContainer(dummy_session, dummy_redis)
+
+    ds = DataStore(cast("Any", container))
+    ds.cache = cast("Any", DummyCache())
+
+    await ds.add_pending_comment_scan(tid=1, pid=2, backfill=False, task_kind="full")
+
+    assert dummy_session.last_statement is not None
+    compiled = str(
+        dummy_session.last_statement.compile(  # type: ignore[attr-defined]
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    )
+    assert "ON CONFLICT" in compiled
+    assert "DO UPDATE" in compiled
+    assert "task_kind" in compiled
+
+
+@pytest.mark.asyncio
+async def test_remove_pending_comment_scan_supports_task_kind_filter():
+    """测试 remove_pending_comment_scan 支持按 task_kind 条件删除。"""
+    DataStore._cache = None
+
+    dummy_session = DummySession(existing_ids=set())
+    dummy_redis = DummyRedis()
+    container = DummyContainer(dummy_session, dummy_redis)
+
+    ds = DataStore(cast("Any", container))
+    ds.cache = cast("Any", DummyCache())
+
+    await ds.remove_pending_comment_scan(1, 2, task_kind="incremental")
+
+    assert dummy_session.last_statement is not None
+    compiled = str(
+        dummy_session.last_statement.compile(  # type: ignore[attr-defined]
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    )
+    assert "DELETE FROM pending_comment_scan" in compiled
+    assert "task_kind" in compiled

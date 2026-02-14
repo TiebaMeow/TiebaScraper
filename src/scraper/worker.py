@@ -1090,8 +1090,8 @@ class IncrementalScanCommentsTaskHandler(TaskHandler):
 
     async def _finalize_comment_scan(self, tid: int, pid: int) -> None:
         """移除 pending_comment_scan 标记，表示该评论扫描任务已完成。"""
-        await self.datastore.remove_pending_comment_scan(tid, pid)
-        self.log.debug("Removed pending_comment_scan marker for tid={}, pid={}", tid, pid)
+        await self.datastore.remove_pending_comment_scan(tid, pid, task_kind="incremental")
+        self.log.debug("Removed incremental pending_comment_scan marker for tid={}, pid={}", tid, pid)
 
     async def _scan_comment_pages(
         self,

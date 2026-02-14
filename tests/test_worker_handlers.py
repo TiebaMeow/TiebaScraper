@@ -466,6 +466,7 @@ async def test_full_scan_comments_handler():
 
     # 应该推送楼中楼事件
     datastore.push_object_event.assert_awaited_with("comment", comment)
+    datastore.remove_pending_comment_scan.assert_awaited_once_with(1, 100)
 
 
 @pytest.mark.asyncio
@@ -493,6 +494,7 @@ async def test_full_scan_comments_handler_backfill_no_push():
 
     # 回溯模式不应该推送事件
     datastore.push_object_event.assert_not_called()
+    datastore.remove_pending_comment_scan.assert_awaited_once_with(1, 100)
 
 
 # ==================== IncrementalScanCommentsTaskHandler 测试 ====================
@@ -524,6 +526,8 @@ async def test_incremental_scan_comments_handler():
 
     # 应该只推送新楼中楼
     datastore.push_object_event.assert_awaited_with("comment", new_comment)
+    # 增量扫描只应清理 incremental 标记，避免误删 full 标记
+    datastore.remove_pending_comment_scan.assert_awaited_once_with(1, 100, task_kind="incremental")
 
 
 @pytest.mark.asyncio

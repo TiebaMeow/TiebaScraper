@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, ClassVar, Literal
 
 from cashews import Cache, add_prefix
-from sqlalchemy import delete, select
+from sqlalchemy import case, delete, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from tiebameow.models.orm import Comment, Forum, Post, Thread, User
@@ -420,14 +420,35 @@ class DataStore:
         """添加一条楼中楼待扫描记录。"""
         async with self.get_session() as session:
             pending = PendingCommentScan(tid=tid, pid=pid, backfill=backfill, task_kind=task_kind)
-            stmt = insert(PendingCommentScan).values(pending.to_dict()).on_conflict_do_nothing()
+            stmt = insert(PendingCommentScan).values(pending.to_dict())
+            # 冲突时采用 "full" 优先策略：
+            # - 已有记录是 full，则保持 full；
+            # - 新写入是 full，则将 incremental 升级为 full。
+            # 这样可避免增量任务覆盖全量语义，导致重启恢复时丢失全量扫描机会。
+            task_kind_expr = case(
+                (PendingCommentScan.task_kind == "full", "full"),
+                (stmt.excluded.task_kind == "full", "full"),
+                else_="incremental",
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=[PendingCommentScan.tid, PendingCommentScan.pid],
+                set_={"task_kind": task_kind_expr},
+            )
             await session.execute(stmt)
             await session.commit()
 
-    async def remove_pending_comment_scan(self, tid: int, pid: int) -> None:
+    async def remove_pending_comment_scan(
+        self,
+        tid: int,
+        pid: int,
+        *,
+        task_kind: PendingCommentTaskKind | None = None,
+    ) -> None:
         """移除一条楼中楼待扫描记录。"""
         async with self.get_session() as session:
             stmt = delete(PendingCommentScan).where((PendingCommentScan.tid == tid) & (PendingCommentScan.pid == pid))
+            if task_kind is not None:
+                stmt = stmt.where(PendingCommentScan.task_kind == task_kind)
             await session.execute(stmt)
             await session.commit()
 
