@@ -278,8 +278,7 @@ async def main(mode: Literal["periodic", "backfill", "hybrid"] = "periodic"):
             tasks.extend(worker_tasks)
 
             await scheduler_task
-            join_tasks = [q.join() for q in router.lanes.values()]
-            await asyncio.gather(*join_tasks)
+            await router.wait_idle()
 
         else:  # hybrid
             await _run_hybrid_mode(scheduler, workers, router)

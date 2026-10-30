@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from ..core.metrics import QUEUE_SIZE
 
 if TYPE_CHECKING:
+    from .router import BackfillTracker
     from .tasks import Task
 
 
@@ -26,10 +27,11 @@ class UniquePriorityQueue:
         _q: 内部 asyncio.PriorityQueue
     """
 
-    def __init__(self, lane: str = "unknown", maxsize: int = 0):
+    def __init__(self, lane: str = "unknown", maxsize: int = 0, *, tracker: BackfillTracker | None = None):
         self.lane = lane
         self._q: asyncio.PriorityQueue[Task] = asyncio.PriorityQueue(maxsize=maxsize)
         self._unique_set: set[tuple[int, str, object]] = set()
+        self._tracker = tracker
 
     def _get_unique_key(self, item: Task) -> tuple[int, str, object]:
         """生成任务的唯一标识键。
@@ -54,11 +56,15 @@ class UniquePriorityQueue:
             return
 
         self._unique_set.add(unique_key)
+        if self._tracker is not None:
+            self._tracker.on_put()
         try:
             self._q.put_nowait(item)
             QUEUE_SIZE.labels(lane=self.lane).inc()
         except BaseException:
             self._unique_set.discard(unique_key)
+            if self._tracker is not None:
+                self._tracker.on_done()
             raise
 
     async def put(self, item: Task):
@@ -68,11 +74,15 @@ class UniquePriorityQueue:
             return
 
         self._unique_set.add(unique_key)
+        if self._tracker is not None:
+            self._tracker.on_put()
         try:
             await self._q.put(item)
             QUEUE_SIZE.labels(lane=self.lane).inc()
         except BaseException:
             self._unique_set.discard(unique_key)
+            if self._tracker is not None:
+                self._tracker.on_done()
             raise
 
     async def get(self) -> Task:
@@ -94,6 +104,8 @@ class UniquePriorityQueue:
             except Exception:
                 pass
         self._q.task_done()
+        if self._tracker is not None:
+            self._tracker.on_done()
 
     async def join(self):
         await self._q.join()
